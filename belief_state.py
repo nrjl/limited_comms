@@ -2,7 +2,7 @@ import numpy as np
 import sensor_models
 
 class belief:
-    def __init__(self, gridsize, p_z_given_x, p_z_given_x_kwargs = {}, ax=None):
+    def __init__(self, gridsize, p_z_given_x, p_z_given_x_kwargs = {}):
         self.nx = gridsize[0]
         self.ny = gridsize[1]
         self.x = np.arange(self.nx)
@@ -11,7 +11,6 @@ class belief:
         self.p_z_given_x = p_z_given_x
         self.p_z_given_x_kwargs = p_z_given_x_kwargs
         self.p_c = self.uniform_prior
-        self.ax = ax
         self.observations = []
         
     def generate_observations(self,x,c):
@@ -24,89 +23,97 @@ class belief:
     
     def add_observations(self,obs):
         self.observations.extend(obs)
+        for obx,obz in obs:
+            # For each added observation, update p(I|c) for the c samples
+            for ii,xc in enumerate(self.csamples):
+                self.pIgc[ii] = self.pIgc[ii]*self.p_z_given_x(obx,obz,c=xc,**self.p_z_given_x_kwargs)            
         
     def uniform_prior(self, c):
         return self.p_uniform
+        
+    def assign_prior_sample_set(self, xs):
+        # This takes a set of samples drawn from the prior over centre p(c)
+        # and calculates the evidence likelihood for each of them
+        self.csamples = xs
+        self.pIgc = np.array([self.p_I_given_c(xc) for xc in xs])
             
     def uniform_prior_sampler(self,n=1):
         xs = np.random.uniform(high=self.nx,size=(n,1))
         ys = np.random.uniform(high=self.ny,size=(n,1))
         return np.hstack((xs,ys))    
         
-    def mc_p_I(self,xs):
-        mc_accumulator = 0.0
-        for xc in xs:
-            mc_accumulator += self.p_I_given_c(c=xc)
-        return mc_accumulator/xs.shape[0]
+    def mc_p_I(self,xs=None):
+        if xs is not None:
+            mc_accumulator = 0.0
+            for xc in xs:
+                mc_accumulator += self.p_I_given_c(c=xc)
+            return mc_accumulator/xs.shape[0]
+        return self.pIgc.mean()
     
-    def p_I_given_c(self,c):
+    def p_I_given_c(self,c,obs=None):
         p_evidence = 1.0
-        for xx,zz in self.observations:
+        if obs==None:
+            obs=self.observations
+        for xx,zz in obs:
             p_evidence *= self.p_z_given_x(xx,zz,c=c,**self.p_z_given_x_kwargs)
         return p_evidence
     
-    def p_c_given_I(self,c,xs,pc=None,pI=None):
+    def p_c_given_I(self,c,pc=None,pI=None):
         pIgc = self.p_I_given_c(c)
         if pc == None:
             pc = self.p_c(c)
         if pI == None:
-            pI = self.mc_p_I(xs)
+            pI = self.mc_p_I()
         return pIgc*pc/pI
         
-    def mc_p_z_given_I(self,x,z,n_pIsamples=None,xs=None):
-        # Generate pI:
-        if [n_pIsamples, xs].count(None) != 1:
-            raise TypeError("Specify number of samples or sample list")
+    def mc_p_z_given_I(self,x,z,xs=None):
         if xs is None:
-            xs = self.uniform_prior_sampler(n_pIsamples)
-
-        pI_accumulator = 0.0
-        pz_accumulator = 0.0
-        for xc in xs:
-            pIgc = self.p_I_given_c(xc)
-            pI_accumulator += pIgc
-            pz_accumulator += pIgc*self.p_z_given_x(x,z,c=xc,**self.p_z_given_x_kwargs)
+            xs = self.csamples
+            pIgc = self.pIgc
+        else:
+            pIgc = np.array([self.p_I_given_c(xc) for xc in xs])
+            
+        pzgc = np.array([self.p_z_given_x(x,z,c=xc,**self.p_z_given_x_kwargs) for xc in xs])
+        
+        pz_accumulator = np.multiply(pIgc,pzgc).sum()
         # pI = pI_accumulator/xs.shape[0], and likewise for the pz_accumlator,
         # so p(z(x)|I) is just the ratio (the counts will cancel)
-        return pz_accumulator/pI_accumulator
+        return pz_accumulator/pIgc.sum()
         
-    def kld_utility(self,x,xs):
+    def kld_utility(self,x):
         # Ignoring p(I)
         pc = self.p_c(0) # Only for uniform
-        pzgI = self.mc_p_z_given_I(x,True,xs=xs)
+        pzgI = self.mc_p_z_given_I(x,True)
         
         VT_accumulator = 0.0
         VF_accumulator = 0.0
-        for xc in xs:
+        for ii,xc in enumerate(self.csamples):
             pzgc = self.p_z_given_x(x,True,c=xc,**self.p_z_given_x_kwargs)
-            pIgc = self.p_I_given_c(xc)
+            pIgc = self.pIgc[ii]
             VT_accumulator += pzgc*pIgc*pc*np.log(pzgc/pzgI)
             VF_accumulator += (1-pzgc)*pIgc*pc*np.log((1.0-pzgc)/(1.0-pzgI))
         return VT_accumulator+VF_accumulator            
         
-    def centre_probability_map(self,mcn=1000):
+    def centre_probability_map(self):
         pcI = np.zeros((self.nx,self.ny))
-        xs = self.uniform_prior_sampler(mcn)
-        pI = self.mc_p_I(xs)
+        pI = self.mc_p_I()
         pc = self.p_c(0) # Constant (uniform) prior
         for ii,xx in enumerate(self.x):
             for jj,yy in enumerate(self.y):
-                pcI[ii,jj] = self.p_c_given_I(c=[xx,yy],xs=xs,pc=pc,pI=pI)
+                pcI[ii,jj] = self.p_c_given_I(c=[xx,yy],pc=pc,pI=pI)
         return pcI
         
-    def observation_probability_map(self,mcn=1000):
-        xs = self.uniform_prior_sampler(mcn)
+    def observation_probability_map(self):
         pz = np.zeros((self.nx,self.ny))
         for ii,xx in enumerate(self.x):
             for jj,yy in enumerate(self.y):
-                pz[ii,jj] = self.mc_p_z_given_I([xx,yy],True,xs=xs)
+                pz[ii,jj] = self.mc_p_z_given_I([xx,yy],True)
         return pz    
     
     def utility_map(self,mcn=1000):
-        xs = self.uniform_prior_sampler(mcn)
         Vx = np.zeros((self.nx,self.ny))
         for ii,xx in enumerate(self.x):
             for jj,yy in enumerate(self.y):
-                Vx[ii,jj] = self.kld_utility([xx,yy],xs)
+                Vx[ii,jj] = self.kld_utility([xx,yy])
         return Vx
     
