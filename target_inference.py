@@ -17,7 +17,7 @@ obs_model = sensor_models.logistic_obs
 obs_kwargs = {'r':target_radius,'true_pos':0.95,'true_neg':0.90}
 
 # Prior sampler
-mcsamples = 1000
+mcsamples = 250
 
 # Observation set
 evidence_x = sensor_models.arc_samples((46.0,13.0), 30.0, 160, 50, n=20)
@@ -51,6 +51,7 @@ for axx in ax:
     axx.plot(target_centre[0],target_centre[1],'wx',mew=2,ms=10)
     for xx,zz in obs:
         axx.plot(xx[0],xx[1],obs_symbols[zz])
+hcs = ax[1].plot(test_state.csamples[:,0],test_state.csamples[:,1],'k.')
 
 fig.set_size_inches(10,4)
 ax[0].set_xlim(-.5, field_size[0]-0.5)
