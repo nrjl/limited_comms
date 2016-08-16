@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from fields import TrueField,ProbField
+import fields
 
 plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 plt.rc('text', usetex=True)
@@ -43,27 +43,27 @@ zC = np.hstack((z0,z3[2:]))
 symbols = ('r^','go')
 
 hTf, hTa = plt.subplots()
-pt_field = TrueField(paperx, papery, obs_fun, obs_fun_kwargs={'c': papertarget, 'r': paperradius}, ax=hTa)
+pt_field = fields.TrueField(paperx, papery, obs_fun, obs_fun_kwargs={'c': papertarget, 'r': paperradius}, ax=hTa)
 
 
 def show_evidence(nx,ny,obs_fun,obs_fun_kwargs,zp,z):
     hf, ha = plt.subplots()
     ha.plot(papertarget[0],papertarget[1],'wx',mew=2,ms=10)
-    p_field = ProbField(nx, ny, obs_fun, obs_fun_kwargs=obs_fun_kwargs, ax=ha)
+    p_field = fields.ProbField(nx, ny, obs_fun, obs_fun_kwargs=obs_fun_kwargs, ax=ha)
     for i,z_pos in enumerate(zp):
-        p_field.update_field(z_pos, z[i])
+        p_field.update_field(z_pos, z[i],fmax=0.00075)
         ha.plot(z_pos[0],z_pos[1],symbols[z[i]])
-    return hf,ha
+    return hf,ha,p_field
 
-h0f,h0a = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, z0_pos,z0)
-hAf,hAa = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, zA_pos,zA)
-hBf,hBa = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, zB_pos,zB)
-hCf,hCa = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, zC_pos,zC)
-h1f,h1a = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, np.vstack((z1_pos,z2_pos,z3_pos)), np.hstack((z1,z2,z3)))
+h0f,h0a,pf0 = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, z0_pos,z0)
+hAf,hAa,pfa = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, zA_pos,zA)
+hBf,hBa,pfb = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, zB_pos,zB)
+hCf,hCa,pfc = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, zC_pos,zC)
+h1f,h1a,pf1 = show_evidence(paperx, papery, obs_fun,{'r': paperradius}, np.vstack((z1_pos,z2_pos,z3_pos)), np.hstack((z1,z2,z3)))
 
-#h0f.savefig('fig/k0.pdf', bbox_inches='tight')
-#hAf.savefig('fig/kA.pdf', bbox_inches='tight')
-#hBf.savefig('fig/kB.pdf', bbox_inches='tight')
-#hCf.savefig('fig/kC.pdf', bbox_inches='tight')
-#h1f.savefig('fig/k1.pdf', bbox_inches='tight')
+#h0f.savefig('fig/k0b.png', bbox_inches='tight')
+#hAf.savefig('fig/kAb.png', bbox_inches='tight')
+#hBf.savefig('fig/kBb.png', bbox_inches='tight')
+#hCf.savefig('fig/kCb.png', bbox_inches='tight')
+#h1f.savefig('fig/k1b.png', bbox_inches='tight')
 plt.show()

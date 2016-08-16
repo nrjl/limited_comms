@@ -7,9 +7,9 @@ def step_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9):
         return 1.0 - step_obs(x,True,c,r,true_pos,true_neg)
         
 # Continuous function (logistic)
-def logistic_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9):
+def logistic_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9, decay_rate=0.25):
     if z==True:
-        return true_pos - (true_pos+true_neg-1.0)/(1+np.exp(-0.25*(np.linalg.norm(x-c)-r)))
+        return true_pos - (true_pos+true_neg-1.0)/(1+np.exp(-decay_rate*(np.linalg.norm(x-c)-r)))
     else:
         return 1.0-logistic_obs(x,True,c,r, true_pos=0.95, true_neg=0.9)
         

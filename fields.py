@@ -15,9 +15,11 @@ class Field:
         self.h_ax.set_xlim(0,mat.shape[0])
         self.h_ax.set_ylim(0,mat.shape[1])
     
-    def update_plot(self,mat):
-        self.hmat.set_data(mat.transpose())    
-        self.hmat.set_clim([0, mat.max()])       
+    def update_plot(self,mat,fmax=None):
+        self.hmat.set_data(mat.transpose())
+        if fmax == None:
+            fmax = mat.max()
+        self.hmat.set_clim([0, fmax])       
 
 class TrueField:
     def __init__(self, gridsizex, gridsizey, obs_fun, obs_fun_kwargs={}, ax=None):      
@@ -61,7 +63,7 @@ class ProbField:
         p_obs = self.obs_fun[z](z_loc, x, **self.obs_fun_kwargs)
         self.p_centre[x[0],x[1]] = p_obs*prior
         
-    def update_field(self, z_loc, z):
+    def update_field(self, z_loc, z, fmax=None):
         x_loc = np.array([0,0])
         for x_loc[0] in self.x:
             for x_loc[1] in self.y:
@@ -70,4 +72,4 @@ class ProbField:
             self.p_centre = self.p_centre/self.p_centre.sum()
         else:
             self.p_centre = self.p_centre/self.p_z[z]
-        self.field.update_plot(self.p_centre)
+        self.field.update_plot(self.p_centre, fmax=fmax)
