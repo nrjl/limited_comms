@@ -38,6 +38,7 @@ fobs,axobs = plt.subplots()
 axobs.plot(xx,yy)
 axobs.set_ylim(0,1.0)
 axobs.set_ylabel(r'$P(z(r) = T)$'); axobs.set_xlabel('Range, $r$')
+fobs.show()
 
 # Setup vehicle belief
 glider_motion = yaw_rate_motion(max_yaw=np.pi, speed=4.0, n_yaws=6, n_points=21)

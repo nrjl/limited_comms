@@ -27,7 +27,9 @@ class yaw_rate_motion:
             self.full_pose[:,0,ii] = x*speed
             self.full_pose[:,1,ii] = y*speed
             self.full_pose[:,2,ii] = np.linspace(0,yd,n_points)
-
+            
+    def get_paths_number(self):
+        return self.n_yaws
         
     def get_end_points(self,start_pose=np.array([0.0,0.0,0.0])):
         rel_poses = self.full_pose[-1,:,:].transpose()

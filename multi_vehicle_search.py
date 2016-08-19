@@ -8,7 +8,7 @@ import copy
 plt.style.use('ggplot')
 plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
-randseed = 1
+randseed = 2
 
 n_obs = 120         # Number of observations for simulation
 n_vehicles = 3      # Number of vehicles
@@ -21,6 +21,8 @@ target_radius = 15.0
 # Observation model
 obs_model = sensor_models.logistic_obs
 obs_kwargs = {'r':target_radius,'true_pos':0.9,'true_neg':0.9, 'decay_rate':0.35}
+#obs_model = sensor_models.step_obs
+#obs_kwargs = {'r':target_radius,'true_pos':0.9,'true_neg':0.9}
 
 # Start state (location and heading rad)
 start_rand = np.random.rand(n_vehicles,3)
@@ -50,17 +52,30 @@ fobs,axobs = plt.subplots()
 axobs.plot(xx,yy)
 axobs.set_ylim(0,1.0)
 axobs.set_ylabel(r'$P(z(r) = T)$'); axobs.set_xlabel('Range, $r$')
+fobs.show()
 
 # Setup vehicle belief
 glider_motion = yaw_rate_motion(max_yaw=np.pi, speed=4.0, n_yaws=6, n_points=21)
-vehicle_beliefs = [belief_state.belief(field_size, obs_model, obs_kwargs) for i in range(n_vehicles)]
-for vb in vehicle_beliefs:
-    vb.set_motion_model(glider_motion)
+vehicle_beliefs = [belief_state.belief_unshared(field_size, obs_model, obs_kwargs,motion_model=glider_motion) for i in range(n_vehicles)]
 
 def dkl_map(vb):
     pcgI = vb.persistent_centre_probability_map()
     dkl = pcgI*np.log(pcgI/vb.p_c(0))
     return dkl.sum()/pcgI.sum()
+    
+def sync_beliefs(vbs,last_share):
+    cobs = vbs[-1].observations
+    cpIgc = vbs[-1].pIgc
+    cpIgc_map = vbs[-1].pIgc_map
+    for ii in range(n_vehicles-1):
+        cobs.extend(vbs[ii].observations[last_share:])
+        cpIgc *= vbs[ii].unshared_pIgc
+        cpIgc_map *= vbs[ii].unshared_pIgc_map
+    for vb in vbs:
+        vb.observations = cobs
+        vb.pIgc = cpIgc
+        vb.pIgc_map = cpIgc_map
+        vb.reset_unshared()
 
 h_fig, h_ax = plt.subplots(1,n_vehicles) #, sharex=True, sharey=True)
 h_fig.set_size_inches(5*n_vehicles,5,forward=True)
@@ -70,12 +85,12 @@ for i in range(n_vehicles):
     h_art[i].append(h_ax[i].imshow(np.zeros(field_size), origin='lower',vmin=0,animated=True)) #0 Image
     h_art[i].extend(h_ax[i].plot(target_centre[0],target_centre[1],'wx',mew=2,ms=10)) #1 Target location
     h_art[i].extend(h_ax[i].plot(start_pose[i][0],start_pose[i][1],'yo',mew=0.5)) #2 Start location
-    h_art[i].extend(h_ax[i].plot([],[],'w-')) #3 Trajectory
-    h_art[i].extend(h_ax[i].plot([],[],obs_symbols[0],mec='w',mew=1,ms=6.5)) #4 Shared False
-    h_art[i].extend(h_ax[i].plot([],[],obs_symbols[1],mec='w',mew=1,ms=6.5)) #5 Shared True
-    h_art[i].extend(h_ax[i].plot([],[],'o',color='orange',ms=8,mew=0)) #6 Current position
-    h_art[i].extend(h_ax[i].plot([],[],obs_symbols[0],mew=0,ms=6)) #7 Local False
-    h_art[i].extend(h_ax[i].plot([],[],obs_symbols[1],mew=0,ms=6)) #8 Local True
+    h_art[i].extend(h_ax[i].plot([],[],'^',color='darksalmon',mec='w',mew=0,ms=5)) #3 Shared False
+    h_art[i].extend(h_ax[i].plot([],[],'o',color='darkseagreen',mec='w',mew=0,ms=5)) #4 Shared True
+    h_art[i].extend(h_ax[i].plot([],[],'w-',lw=2)) #5 Trajectory
+    h_art[i].extend(h_ax[i].plot([],[],'o',color='gold',ms=8,mew=0)) #6 Current position
+    h_art[i].extend(h_ax[i].plot([],[],obs_symbols[0],mew=0.5,mec='w',ms=6.5)) #7 Local False
+    h_art[i].extend(h_ax[i].plot([],[],obs_symbols[1],mew=0.5,mec='w',ms=6.5)) #8 Local True
     h_art[i].extend(h_ax[i].plot([],[],'k.')) #9 Possible moves
     h_ax[i].set_xlim(-.5, field_size[0]-0.5)
     h_ax[i].set_ylim(-.5, field_size[1]-0.5)    
@@ -109,8 +124,8 @@ def init():
             h_art[i][7].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==False]))
             h_art[i][8].set_data([],[])
         h_art[i][6].set_data(start_pose[i][0],start_pose[i][1])
+        h_art[i][3].set_data([],[])
         h_art[i][4].set_data([],[])
-        h_art[i][5].set_data([],[])
     return [item for sublist in h_art for item in sublist]
 
 vehicle_set = set(range(n_vehicles))
@@ -120,8 +135,8 @@ def animate(i):
         Fobs = [xx for xx,zz in vehicle_beliefs[0].observations if zz==False]
         Tobs = [xx for xx,zz in vehicle_beliefs[0].observations if zz==True]
         for hh in h_art:
-            hh[4].set_data(*zip(*Fobs))
-            hh[5].set_data(*zip(*Tobs))
+            hh[3].set_data(*zip(*Fobs))
+            hh[4].set_data(*zip(*Tobs))
         current_wait += 1
     elif current_wait < share_wait:
         current_wait += 1
@@ -136,8 +151,11 @@ def animate(i):
         for ii in range(n_vehicles):
             other_vehicles = vehicle_set - {ii}
             for jj in other_vehicles:
-                vehicle_beliefs[ii].add_observations(vehicle_beliefs[jj].observations[last_share:nobs])
-        last_share = nobs
+                vehicle_beliefs[ii].add_observations(vehicle_beliefs[jj].observations[last_share:nobs],vehicle_beliefs[jj].unshared_pIgc,vehicle_beliefs[jj].unshared_pIgc_map)
+        for vb in vehicle_beliefs:
+            vb.reset_unshared()
+        last_share = len(vehicle_beliefs[0].observations)
+        print "Shared at {0}".format(last_share)
         curr_dkl = dd[vm]+delta_dkl*max_dkl
         current_wait = 0
         return [item for sublist in h_art for item in sublist]
@@ -151,14 +169,14 @@ def animate(i):
             hh[9].set_data(fposes[:,0],fposes[:,1]) 
             obs = vehicle_belief.get_observations()
             if obs[-1][1]:
-                hh[8].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==True]))
+                hh[8].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs[last_share:] if zz==True]))
             else:
-                hh[7].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==False]))
+                hh[7].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs[last_share:] if zz==False]))
         
             cpos = vehicle_belief.get_current_pose()
             hh[6].set_data(cpos[0],cpos[1])
             pp = np.array(fp)
-            hh[3].set_data(pp[:,0],pp[:,1])
+            hh[5].set_data(pp[:,0],pp[:,1])
     
     pcmax = 0.0
     for hh,vb in zip(h_art,vehicle_beliefs):
