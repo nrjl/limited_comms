@@ -1,5 +1,7 @@
 import numpy as np
-import sensor_models
+#import sensor_models
+import copy
+import itertools
 
 class belief(object):
     def __init__(self, gridsize, p_z_given_x, p_z_given_x_kwargs = {}, pose=np.array([0.0,0.0,0.0]), motion_model=None):
@@ -134,15 +136,22 @@ class belief(object):
         d_kl = 1/p_all*np.mean(p_all_samples*np.log(p_new_obs_c*pI/p_all))
         return d_kl
 
-    def kld_likelihood(self,X,Z,pzgc=None):
+    def kld_likelihood(self,pzgc=None,X=[],Z=[]):
         if pzgc is None:
             pzgc = np.array([self.pzgc_samples(x,z) for x,z in zip(X,Z)])
         p_new_obs_c = np.product(pzgc, axis=0)
         p_all_samples = p_new_obs_c*self.pIgc
         p_all = p_all_samples.mean()
         pI = self.mc_p_I()
-        d_kl = 1/p_I*np.mean(p_all_samples*np.log(p_new_obs_c*pI/p_all))
+        d_kl = 1/pI*np.mean(p_all_samples*np.log(p_new_obs_c*pI/p_all))
         return d_kl
+        
+    def pZ(self, pzgc):
+        p_new_obs_c = np.product(pzgc, axis=0)
+        p_all_samples = p_new_obs_c*self.pIgc
+        p_all = p_all_samples.mean()
+        pI = self.mc_p_I()
+        return p_all/pI
                 
     def centre_probability_map(self):
         pcI = np.zeros((self.nx,self.ny))
@@ -179,28 +188,36 @@ class belief(object):
         return future_pose,Vx,amax
 
     def build_likelihood_tree(self,depth=3):
-        if self.likelihood_tree is None:
-            self.likelihood_tree = likelihood_tree_node(
-                self.pose, 
-                self.motion_model, 
-                self.pzgc_samples, 
-                inverse_depth=depth)
-        end_dimension = self.motion_model.get_paths_number()**depth
-        end_kld = np.zeros(end_dimension)
+        self.likelihood_tree = likelihood_tree_node(
+            self.pose, 
+            self.motion_model, 
+            self.pzgc_samples, 
+            inverse_depth=depth)
+            
+    def kld_tree(self, depth=3):
+        n_yaws = self.motion_model.get_paths_number()
+        end_kld = []
+        for path in itertools.product(range(n_yaws),repeat=depth):
+            end_kld.append(self.likelihood_tree.kld_path_utility(
+                self.kld_likelihood,path))
+        #end_poses = self.motion_model.get_leaf_points(self.get_current_pose(),depth)             
+        #end_kld = np.reshape(end_kld,n_yaws*np.ones(depth,dtype='int'))
+        return end_kld
         
-        # Generate all the observation likelihoods
-        #pzgc_all = 
-        
-        future_pose = self.motion_model.get_end_points(self.get_current_pose())
-        Vx = np.array([self.kld_utility(pos[0:2]) for pos in future_pose])
-        amax = np.argmax(Vx)
-        
-        next_pose = future_pose[amax]
+    def kld_select_obs(self,depth,target_centre):
+        Vx = np.array(self.kld_tree(depth))
+        path_max = np.unravel_index(np.argmax(Vx), self.motion_model.get_paths_number()*np.ones(depth,dtype='int'))
+        amax = path_max[0]
+        leaf_poses = self.motion_model.get_leaf_points(self.get_current_pose(),depth)
+        next_poses = self.motion_model.get_leaf_points(self.get_current_pose(),1)
+        next_pose = next_poses[amax]
+        self.prune_likelihood_tree(amax,depth)
         self.set_current_pose(next_pose)
+        
         cobs = self.generate_observations([next_pose[0:2]],c=target_centre)
         self.add_observations(cobs)
-        return future_pose,Vx,amax        
-        
+        return leaf_poses,Vx,amax
+                
     def prune_likelihood_tree(self,selected_option,depth):
         self.likelihood_tree.children[selected_option].add_children(depth)
         self.likelihood_tree = self.likelihood_tree.children[selected_option]        
@@ -299,6 +316,35 @@ class likelihood_tree_node(object):
                 child.plot_tree(ax,colour_index+1)
                 tt = self.motion_model.get_trajectory(self.pose,ii)
                 ax.plot(tt[:,0],tt[:,1],'--',color='grey')
+                
+    def kld_path_utility(self, kld_function, decision_list, current_depth=0, curr_pzgc=[]):
+        new_pzgc = copy.copy(curr_pzgc)
+        new_pzgc.append(self.likelihood[0])
+        kld_sum = 0.0
+        if current_depth == 0:
+            kld_sum = self.children[decision_list[0]].kld_path_utility(
+                kld_function,
+                decision_list,
+                current_depth+1,
+                [])
+                
+        elif current_depth < len(decision_list):
+            child_branch = decision_list[current_depth]
+            for cl in self.likelihood:
+                new_pzgc[-1] = cl
+                kld_sum += self.children[child_branch].kld_path_utility(
+                    kld_function,
+                    decision_list,
+                    current_depth+1,
+                    new_pzgc)
+        else:
+            for cl in self.likelihood:
+                new_pzgc[-1] = cl
+                kld_sum += kld_function(pzgc = np.array(new_pzgc))
+                #print "kld_fun called! kld_sum={0:0.3f}".format(kld_sum)
+        return kld_sum
+
+          
 
 # Every so often, I look at the expectation of the KL between our current shared belief and what I would have if I kept sampling on my own
 # Compare against teh 

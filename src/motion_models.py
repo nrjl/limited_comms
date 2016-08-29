@@ -34,6 +34,17 @@ class yaw_rate_motion:
     def get_end_points(self,start_pose=np.array([0.0,0.0,0.0])):
         rel_poses = self.full_pose[-1,:,:].transpose()
         return transform_trajectory(rel_poses,start_pose)
+            
+    def get_leaf_points(self,start_pose=np.array([0.0,0.0,0.0]),depth=1):
+        op = self.get_end_points(start_pose)
+        if depth > 1:
+            rp = []
+            op = self.get_end_points(start_pose)
+            for pose in op:
+                rp.extend(self.get_leaf_points(pose,depth-1))
+        else:
+            rp = op
+        return np.array(rp)
         
     def get_trajectory(self,start_pose=np.array([0.0,0.0,0.0]),ii=0):
         rel_poses = self.full_pose[:,:,ii]

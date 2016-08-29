@@ -8,7 +8,7 @@ import copy
 plt.style.use('ggplot')
 plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
-randseed = 2
+randseed = 0
 
 n_obs = 120         # Number of observations for simulation
 n_vehicles = 3      # Number of vehicles
@@ -191,7 +191,7 @@ def animate(i):
     return [item for sublist in h_art for item in sublist]
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = n_obs, interval = 100, blit = True, repeat = False)
-#ani.save('vid/multiple_tracking.mp4', writer = 'avconv', fps=3, bitrate=5000, codec='libx264')
+ani.save('vid/temp.mp4', writer = 'avconv', fps=3, bitrate=5000, codec='libx264')
 h_fig.show()
 
 
