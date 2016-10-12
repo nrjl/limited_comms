@@ -5,9 +5,9 @@ import sensor_models
 from motion_models import yaw_rate_motion
 import belief_state
 import copy
-plt.style.use('ggplot')
-plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
-plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
+#plt.style.use('ggplot')
+#plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
+#plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
 randseed = 0
 
 n_obs = 120         # Number of observations for simulation
@@ -17,6 +17,8 @@ n_vehicles = 3      # Number of vehicles
 field_size = (100,100)
 target_centre = np.array([25.0,75.0])
 target_radius = 15.0
+
+kld_depth = 2
 
 # Observation model
 obs_model = sensor_models.logistic_obs
@@ -56,7 +58,8 @@ fobs.show()
 
 # Setup vehicle belief
 glider_motion = yaw_rate_motion(max_yaw=np.pi, speed=4.0, n_yaws=6, n_points=21)
-vehicle_beliefs = [belief_state.belief_unshared(field_size, obs_model, obs_kwargs,motion_model=glider_motion) for i in range(n_vehicles)]
+vehicle_beliefs = [belief_state.BeliefUnshared(field_size, obs_model, obs_kwargs,motion_model=glider_motion) for i in range(n_vehicles)]
+start_offsets = [glider_motion.get_leaf_points(sp,depth=kld_depth)[:,0:2] for sp in start_pose]
 
 def dkl_map(vb):
     pcgI = vb.persistent_centre_probability_map()
@@ -91,7 +94,8 @@ for i in range(n_vehicles):
     h_art[i].extend(h_ax[i].plot([],[],'o',color='gold',ms=8,mew=0)) #6 Current position
     h_art[i].extend(h_ax[i].plot([],[],obs_symbols[0],mew=0.5,mec='w',ms=6.5)) #7 Local False
     h_art[i].extend(h_ax[i].plot([],[],obs_symbols[1],mew=0.5,mec='w',ms=6.5)) #8 Local True
-    h_art[i].extend(h_ax[i].plot([],[],'k.')) #9 Possible moves
+    #h_art[i].extend(h_ax[i].plot([],[],'k.')) #9 Possible moves
+    h_art[i].append(h_ax[i].scatter(start_offsets[i][:,0],start_offsets[i][:,1],20)) #9 Possible moves
     h_ax[i].set_xlim(-.5, field_size[0]-0.5)
     h_ax[i].set_ylim(-.5, field_size[1]-0.5)    
     full_path[i].append(start_pose[i])
@@ -103,19 +107,22 @@ def init():
     last_share = 0
     np.random.seed(randseed)
     full_path=[[] for i in range(n_vehicles)]
+    xs = vehicle_beliefs[0].uniform_prior_sampler(mcsamples)
+    
     for i,vehicle_belief in enumerate(vehicle_beliefs):
         vehicle_belief.set_current_pose(copy.copy(start_pose[i]))
         vehicle_belief.reset_observations()
-        
-        xs = vehicle_belief.uniform_prior_sampler(mcsamples)
+    
         vehicle_belief.assign_prior_sample_set(xs)
    
         obs = vehicle_belief.generate_observations([start_pose[i,0:2]],c=target_centre)
         vehicle_belief.add_observations(obs)
         vehicle_belief.update_pc_map = False
+        vehicle_belief.build_likelihood_tree(kld_depth)
         pc = vehicle_belief.persistent_centre_probability_map()
         h_art[i][0].set_data(pc.transpose())
         h_art[i][0].set_clim([0, pc.max()])
+        h_art[i][9].set_offsets(start_offsets[i])
     
         if obs[0][1]:
             h_art[i][8].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==True]))
@@ -163,10 +170,14 @@ def animate(i):
     else:
         for hh,vehicle_belief,fp in zip(h_art,vehicle_beliefs,full_path):
             opose = vehicle_belief.get_current_pose()
-            fposes,Vx,amax = vehicle_belief.select_observation(target_centre)
-            fp.extend(glider_motion.get_trajectory(opose,amax))
+            #fposes,Vx,amax = vehicle_belief.select_observation(target_centre)
+            fposes,Vx,amax = vehicle_belief.kld_select_obs(kld_depth,target_centre)
             Vx = Vx-Vx.min()
-            hh[9].set_data(fposes[:,0],fposes[:,1]) 
+            #h_poss.set_data(fposes[:,0],fposes[:,1]) #,color=plt.cm.jet(Vx/Vx.max()) 
+            fp.extend(glider_motion.get_trajectory(opose,amax))
+            hh[9].set_offsets(fposes[:,0:2])
+            hh[9].set_array(Vx)
+            #hh[9].set_data(fposes[:,0],fposes[:,1]) 
             obs = vehicle_belief.get_observations()
             if obs[-1][1]:
                 hh[8].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs[last_share:] if zz==True]))
@@ -191,7 +202,7 @@ def animate(i):
     return [item for sublist in h_art for item in sublist]
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = n_obs, interval = 100, blit = True, repeat = False)
-ani.save('vid/temp.mp4', writer = 'avconv', fps=3, bitrate=5000, codec='libx264')
+#ani.save('../vid/temp.mp4', writer = 'avconv', fps=3, bitrate=5000, codec='libx264')
 h_fig.show()
 
 

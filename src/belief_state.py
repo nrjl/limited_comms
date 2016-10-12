@@ -3,7 +3,23 @@ import numpy as np
 import copy
 import itertools
 
-class belief(object):
+class TargetFinder(object):
+    def __init__(self, target_loc, belief_state, tdist=1.0):
+        self.belief = belief_state
+        self.target_loc = target_loc
+        self.tdist = tdist
+        self.reset()
+
+    def reset(self):
+        distances = np.array([np.sqrt( (x-self.target_loc[0])**2 + (y-self.target_loc[1])**2) for x,y in self.belief.csamples])
+        self.di = distances < self.tdist
+        self.nc = self.belief.csamples.shape[0]        
+        
+    def prob_mass_in_range(self):
+        pw = self.belief.pIgc[self.di].sum()/self.belief.mc_p_I()/self.nc
+        return pw
+
+class Belief(object):
     def __init__(self, gridsize, p_z_given_x, p_z_given_x_kwargs = {}, pose=np.array([0.0,0.0,0.0]), motion_model=None):
         self.nx = gridsize[0]
         self.ny = gridsize[1]
@@ -64,10 +80,14 @@ class belief(object):
         self.csamples = xs
         self.pIgc = np.array([self.p_I_given_c(xc) for xc in xs])
             
-    def uniform_prior_sampler(self,n=1):
+    def uniform_prior_sampler(self,n=1,set_samples=False):
         xs = np.random.uniform(high=self.nx,size=(n,1))
         ys = np.random.uniform(high=self.ny,size=(n,1))
-        return np.hstack((xs,ys))    
+        samples = np.hstack((xs,ys))
+        if set_samples==True:
+            self.assign_prior_sample_set(samples)
+        else:
+            return samples
         
     def mc_p_I(self,xs=None):
         if xs is not None:
@@ -119,9 +139,7 @@ class belief(object):
         
         VT_accumulator = 0.0
         VF_accumulator = 0.0
-        for ii,xc in enumerate(self.csamples):
-            pzgc = pzgc_a[ii]
-            pIgc = self.pIgc[ii]
+        for pzgc,pIgc in zip(pzgc_a,pIgc):
             VT_accumulator += pzgc*pIgc*pc*np.log(pzgc/pzgI)
             VF_accumulator += (1-pzgc)*pIgc*pc*np.log((1.0-pzgc)/(1.0-pzgI))
         return VT_accumulator+VF_accumulator
@@ -188,7 +206,7 @@ class belief(object):
         return future_pose,Vx,amax
 
     def build_likelihood_tree(self,depth=3):
-        self.likelihood_tree = likelihood_tree_node(
+        self.likelihood_tree = LikelihoodTreeNode(
             self.pose, 
             self.motion_model, 
             self.pzgc_samples, 
@@ -231,9 +249,9 @@ class belief(object):
         return self.pIgc_map*pc/pI
         
         
-class belief_unshared(belief):
+class BeliefUnshared(Belief):
     def __init__(self, gridsize, p_z_given_x, p_z_given_x_kwargs = {}, pose=np.array([0.0,0.0,0.0]), motion_model=None):
-        super(belief_unshared, self).__init__(gridsize, p_z_given_x, p_z_given_x_kwargs, pose, motion_model)
+        super(BeliefUnshared, self).__init__(gridsize, p_z_given_x, p_z_given_x_kwargs, pose, motion_model)
 
     def reset_unshared(self):
         self.unshared_pIgc = np.ones(self.pIgc.shape)
@@ -242,7 +260,7 @@ class belief_unshared(belief):
     def assign_prior_sample_set(self, xs):
         # This takes a set of samples drawn from the prior over centre p(c)
         # and calculates the evidence likelihood for each of them
-        super(belief_unshared, self).assign_prior_sample_set(xs)
+        super(BeliefUnshared, self).assign_prior_sample_set(xs)
         self.reset_unshared()
 
     def add_observations(self,obs,up_pIgc=None,up_pIgc_map=None):
@@ -274,7 +292,7 @@ class belief_unshared(belief):
             self.reset_unshared()
 
 
-class likelihood_tree_node(object):
+class LikelihoodTreeNode(object):
     def __init__(self, pose, motion_model, likelihood_function, inverse_depth=0):
         self.pose = pose
         self.motion_model = motion_model
@@ -291,7 +309,7 @@ class likelihood_tree_node(object):
             return
         if self.children is None:
             end_poses = self.motion_model.get_end_points(self.pose)
-            self.children = [likelihood_tree_node(
+            self.children = [LikelihoodTreeNode(
                 end_pose,
                 self.motion_model,
                 self.likelihood_function,

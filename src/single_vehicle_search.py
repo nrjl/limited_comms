@@ -8,7 +8,7 @@ import copy
 plt.style.use('ggplot')
 plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
-randseed = 2
+randseed = 1
 
 # Number of observations for simulation
 n_obs = 120
@@ -19,7 +19,10 @@ target_centre = np.array([62.0,46.0])
 target_radius = 15.0
 
 # KLD tree search depth
-kld_depth = 2
+kld_depth = 1
+
+# Target range for target finder (50% probability mass in 1% of area near true target)
+target_range = np.sqrt((field_size[0]*field_size[1]/100.0)/np.pi)
 
 # Observation model
 obs_model = sensor_models.logistic_obs
@@ -45,7 +48,7 @@ fobs.show()
 
 # Setup vehicle belief
 glider_motion = motion_models.yaw_rate_motion(max_yaw=np.pi/2.0, speed=4.0, n_yaws=5, n_points=21)
-vehicle_belief = belief_state.belief(field_size, obs_model, obs_kwargs,motion_model=glider_motion)
+vehicle_belief = belief_state.Belief(field_size, obs_model, obs_kwargs,motion_model=glider_motion)
 start_offsets = glider_motion.get_leaf_points(start_pose,depth=kld_depth)[:,0:2]
 
 h_fig, h_ax = plt.subplots() #1,2, sharex=True, sharey=True)
@@ -62,6 +65,8 @@ h_ax.set_xlim(-.5, field_size[0]-0.5)
 h_ax.set_ylim(-.5, field_size[1]-0.5)
 full_path = np.array([start_pose])
 
+p_range = belief_state.TargetFinder(target_centre, vehicle_belief, target_range)
+
 def init():
     global full_path
     np.random.seed(randseed)
@@ -70,13 +75,14 @@ def init():
     vehicle_belief.reset_observations()
     full_path = np.array([start_pose])
     
-    xs = vehicle_belief.uniform_prior_sampler(mcsamples)
-    vehicle_belief.assign_prior_sample_set(xs)
+    # Generate MC samples
+    vehicle_belief.uniform_prior_sampler(mcsamples, set_samples=True)
    
     obs = vehicle_belief.generate_observations([start_pose[0:2]],c=target_centre)
     vehicle_belief.add_observations(obs)
     vehicle_belief.update_pc_map = False
     vehicle_belief.build_likelihood_tree(kld_depth)
+    p_range.reset()
     pc = vehicle_belief.persistent_centre_probability_map()
     h_pc.set_data(pc.transpose())
     h_pc.set_clim([0, pc.max()])
@@ -118,11 +124,11 @@ def animate(i):
     cpos = vehicle_belief.get_current_pose()
     h_cpos.set_data(cpos[0],cpos[1])   
     h_path.set_data(full_path[:,0],full_path[:,1])
-    print "i = {0}/{1}".format(i+1,n_obs)
+    print "i = {0}/{1}, p_range={2}".format(i+1,n_obs, p_range.prob_mass_in_range())
     return h_pc,h_cpos,h_obsF,h_obsT,h_poss,h_tgt,h_start,h_path
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = n_obs, interval = 100, blit = True, repeat = False)
-ani.save('vid/single_tracking.mp4', writer = 'avconv', fps=5, bitrate=5000, codec='libx264') #extra_args=['-vcodec', 'libx264'])
+#ani.save('../vid/single_tracking3.mp4', writer = 'avconv', fps=5, bitrate=15000, codec='libx264') #extra_args=['-vcodec', 'libx264'])
 h_fig.show()
 
 
