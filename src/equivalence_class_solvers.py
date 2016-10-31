@@ -2,11 +2,13 @@ import numpy as np
 import copy
 import random
 
+
 def discrete_entropy(p0):
     H = 0.0
     for p in p0:
         H = H-p*np.log2(p)
     return H
+
 
 class EC_solver(object):
     def __init__(self, theta, r, tests, prior_theta, true_theta):
@@ -32,7 +34,8 @@ class EC_solver(object):
                 like_theta.append(pXe)
             self.lambda_full[theta] = lambda_theta
             self.test_likelihoods[theta] = like_theta
-                    
+
+        self._method_name = 'EC Default'
         self.init_extras()
         self.reset(true_theta)
         
@@ -94,16 +97,22 @@ class EC_solver(object):
         best_test = self.select_test()
         result = self.run_test(best_test)
         self.add_result(best_test, result)
+        return best_test,result
                                 
     def predict_y(self):
         # Break ties randomly
         m = np.max(self.p_Y)
         indices = np.nonzero(self.p_Y == m)[0]
-        return random.choice(indices)
+        return random.choice(indices),m
+
+    def get_name(self):
+        return self._method_name
     
 
 class ECED(EC_solver):
     def init_extras(self):
+        self._method_name = 'ECED'
+
         # Construct edges:
         self.E = set()
         theta_set = set(self.theta)
@@ -111,7 +120,8 @@ class ECED(EC_solver):
             other_thetas = theta_set.difference(rY)
             for t in rY:
                 for tprime in other_thetas:
-                    self.E.add((t,tprime))
+                    if (tprime,t) not in self.E:
+                        self.E.add((t,tprime))
                     
         # Build offsets (since they can be precalculated)
         self.offsets = []
@@ -119,7 +129,7 @@ class ECED(EC_solver):
             offset_test = []
             for test_result in range(self.n_outcomes[test_num]):
                 alltheta = [self.lambda_full[theta][test_num][test_result] for theta in self.theta]
-                offset = 1.0 - max(alltheta)**2
+                offset = 1.0 - (max(alltheta))**2
                 offset_test.append(offset)
             self.offsets.append(offset_test)
 
@@ -166,7 +176,12 @@ class ECED(EC_solver):
             px_t2 = self.test_likelihoods[e[1]][test_num][result]
             self.w_E[e] = self.w_E[e]*px_t1*px_t2
 
+
 class EC_bayes(ECED):
+    def init_extras(self):
+        super(EC_bayes, self).init_extras()
+        self._method_name = 'EC Bayes'
+
     def select_test(self):
         max_util = None
         for test_num,test in enumerate(self.tests):
@@ -180,18 +195,24 @@ class EC_bayes(ECED):
                 for e in self.E:
                     px_t1 = self.test_likelihoods[e[0]][test_num][test_result]
                     px_t2 = self.test_likelihoods[e[1]][test_num][test_result]
-                    U -= p_xe*self.w_E[e]*px_t1*px_t2
+                    U += p_xe*self.w_E[e]*(1.0-px_t1*px_t2)
             if U > max_util:
                 max_util = U #/self.Cost(test)
                 e_star = test_num
         return e_star
 
 class EC_random(EC_solver):
+    def init_extras(self):
+        self._method_name = 'Random'
+
     def select_test(self):
         return random.randint(0,self.n_tests-1)
-        
-                        
+
+
 class EC_US(EC_solver):
+    def init_extras(self):
+        self._method_name = 'US'
+
     def select_test(self):
         # Maximize reduction of entropy over theta
         H_theta = discrete_entropy(self.p_theta.values())
@@ -211,6 +232,9 @@ class EC_US(EC_solver):
         return e_star
                         
 class EC_IG(EC_solver):
+    def init_extras(self):
+        self._method_name = 'IG'
+
     def select_test(self):
         # Maximize reduction of entropy over Y
         H_Y = discrete_entropy(self.p_Y)
