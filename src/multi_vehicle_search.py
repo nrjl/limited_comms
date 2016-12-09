@@ -22,7 +22,7 @@ kld_depth = 2
 
 # Observation model
 obs_model = sensor_models.logistic_obs
-obs_kwargs = {'r':target_radius,'true_pos':0.9,'true_neg':0.9, 'decay_rate':0.35}
+obs_kwargs = {'r':target_radius,'true_pos':0.8,'true_neg':0.8, 'decay_rate':0.35}
 #obs_model = sensor_models.step_obs
 #obs_kwargs = {'r':target_radius,'true_pos':0.9,'true_neg':0.9}
 
@@ -32,7 +32,7 @@ start_pose = np.array([[x*field_size[0],y*field_size[1],(z-0.5)*2*np.pi] for x,y
 #start_pose = np.array([[18.0, 23.0, np.pi/2],[75.0, 75.0, -np.pi/2]])
 
 # Prior sampler
-mcsamples = 2000
+mcsamples = 1000
 
 # Other constants
 obs_symbols = ['r^','go']
@@ -202,7 +202,7 @@ def animate(i):
     return [item for sublist in h_art for item in sublist]
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = n_obs, interval = 100, blit = True, repeat = False)
-#ani.save('../vid/temp.mp4', writer = 'avconv', fps=3, bitrate=5000, codec='libx264')
+ani.save('../vid/temp.ogv', writer = 'avconv', fps=3, bitrate=5000, codec='libtheora')
 h_fig.show()
 
 

@@ -155,6 +155,7 @@ test_picks = np.zeros((len(tests), n_solvers), dtype='int')
 fail_success = ['incorrectly', 'correctly']
 
 random.seed(0)
+random.jumpahead(500)
 
 for ii in range(n_sims):
     # For each simulation, choose a state in the first action set
