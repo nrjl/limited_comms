@@ -3,12 +3,27 @@ import numpy as np
 import copy
 import itertools
 
+class World(object):
+    def __init__(self, width, height, target_location=None):
+        self.width, self.height = width, height
+        self.set_target_location(target_location)
+        
+    def set_target_location(self, target_location):
+        self.target_location = target_location
+        
+    def get_target_location(self):
+        return self.target_location
+        
+    def get_size(self):
+        return self.width, self.height
+        
 class TargetFinder(object):
     def __init__(self, target_loc, belief_state, tdist=1.0):
         self.belief = belief_state
         self.target_loc = target_loc
         self.tdist = tdist
-        self.reset()
+        if hasattr(self.belief, 'csamples'):
+            self.reset()
 
     def reset(self):
         distances = np.array([np.sqrt( (x-self.target_loc[0])**2 + (y-self.target_loc[1])**2) for x,y in self.belief.csamples])
@@ -19,20 +34,22 @@ class TargetFinder(object):
         pw = self.belief.pIgc[self.di].sum()/self.belief.mc_p_I()/self.nc
         return pw
 
-class Belief(object):
-    def __init__(self, gridsize, p_z_given_x, p_z_given_x_kwargs = {}, pose=np.array([0.0,0.0,0.0]), motion_model=None):
-        self.nx = gridsize[0]
-        self.ny = gridsize[1]
-        self.x = np.arange(self.nx)
-        self.y = np.arange(self.ny)
-        self.p_uniform = 1.0/np.prod(gridsize)
-        self.p_z_given_x = p_z_given_x
-        self.p_z_given_x_kwargs = p_z_given_x_kwargs
-        self.p_c = self.uniform_prior
-        self.reset_observations()
-        self.pose = pose
-        self.update_pc_map = False
+
+class Vehicle(object):
+    def __init__(self, world, motion_model, obs_fun, obs_kwargs={}, pose=np.array([0.0,0.0,0.0]), unshared=False):
+        self.world = world
+        self.motion_model = motion_model
+        self.obs_fun = obs_fun
+        self.obs_kwargs = obs_kwargs
+        self.start_pose = pose
+        self.full_path = np.array([self.start_pose])    
+        self.set_current_pose(pose)
         self.set_motion_model(motion_model)
+        if not unshared:
+            self.belief = Belief(self.world, self.obs_fun, self.obs_kwargs)
+        else:
+            self.belief = BeliefUnshared(self.world, self.obs_fun, self.obs_kwargs)
+        self._plots = False
         
     def set_current_pose(self, pose):
         self.pose = pose
@@ -43,13 +60,115 @@ class Belief(object):
     def set_motion_model(self,motion_model):
         self.motion_model = motion_model
         
-    def generate_observations(self,x,c):
+    def generate_observations(self,x,c=None):
+        if c is None:
+            c = self.world.get_target_location()
         obs=[]
         for xx in x:
-            p_T = self.p_z_given_x(xx,True,c,**self.p_z_given_x_kwargs)
+            p_T = self.obs_fun(xx,True,c,**self.obs_kwargs)
             zz = np.random.uniform()<p_T
             obs.append((xx,zz))
-        return obs
+        return obs     
+
+    def build_likelihood_tree(self,depth=3):
+        self.likelihood_tree = LikelihoodTreeNode(
+            self.get_current_pose(), 
+            self.motion_model, 
+            self.belief.pzgc_samples, 
+            inverse_depth=depth)
+            
+    def kld_tree(self, depth=3):
+        n_yaws = self.motion_model.get_paths_number()
+        end_kld = []
+        for path in itertools.product(range(n_yaws),repeat=depth):
+            end_kld.append(self.likelihood_tree.kld_path_utility(
+                self.kld_likelihood,path))
+        #end_poses = self.motion_model.get_leaf_points(self.get_current_pose(),depth)             
+        #end_kld = np.reshape(end_kld,n_yaws*np.ones(depth,dtype='int'))
+        return end_kld
+        
+    def kld_select_obs(self,depth):
+        self.leaf_poses = self.motion_model.get_leaf_points(self.get_current_pose(),depth)
+        self.next_poses = self.motion_model.get_leaf_points(self.get_current_pose(),1)
+        
+        self.leaf_values = np.array(self.kld_tree(depth))
+        path_max = np.unravel_index(np.argmax(self.leaf_values), self.motion_model.get_paths_number()*np.ones(depth,dtype='int'))
+        amax = path_max[0]
+        
+        self.prune_likelihood_tree(amax,depth)
+        self.full_path = np.append(self.full_path, self.motion_model.get_trajectory(self.get_current_pose(),amax),axis=0)
+        
+        self.set_current_pose(self.next_poses[amax])
+        
+        cobs = self.generate_observations([self.get_current_pose[0:2]])
+        self.add_observations(cobs)
+        
+        return amax
+                
+    def prune_likelihood_tree(self,selected_option,depth):
+        self.likelihood_tree.children[selected_option].add_children(depth)
+        self.likelihood_tree = self.likelihood_tree.children[selected_option]  
+        
+    def setup_plot(self, h_ax, tree_depth=None, obs_symbols = ['r^','go'], start_ms=8,target_ms=10,scatter_ms=20):
+        self._plots = True
+        h_ax.clear()
+        self.h_ax = h_ax
+        self.h_artists = {}
+        self.h_artists['cpos'], = self.h_ax.plot([],[],'yo',fillstyle='full')
+        self.h_artists['pc'] = self.h_ax.imshow(np.zeros(self.world.get_size()), origin='lower',vmin=0,animated=True)
+        self.h_artists['target'], = self.h_ax.plot(*self.world.get_target_location(),'wx',mew=2,ms=target_ms)
+        self.h_artists['start'], = self.h_ax.plot(self.start_pose[0],self.start_pose[1],'^',color='orange',ms=start_ms,fillstyle='full')
+        self.h_artists['obsF'], = self.h_ax.plot([],[],obs_symbols[0])
+        self.h_artists['obsT'], = self.h_ax.plot([],[],obs_symbols[1])
+        self.h_artists['path'], = self.h_ax.plot([],[],'w-')
+        self.h_ax.set_xlim(-.5, self.world.get_field_size()[0]-0.5)
+        self.h_ax.set_ylim(-.5, self.world.get_field_size()[1]-0.5)
+        if tree_depth is not None:
+            self.leaf_poses = self.motion_model.get_leaf_points(self.start_pose,depth=tree_depth)[:,0:2]
+            self.h_artists['tree'] = self.h_ax.scatter(self.leaf_poses[:,0],self.leaf_poses[:,1],scatter_ms)
+            
+        return self.h_artists.values()
+            
+    def update_plot(self):
+        cpos = self.get_current_pose()
+        self.h_artists['cpos'].set_data(cpos[0], cpos[1])
+        
+        if self.belief.update_pc_map:
+            pc = vehicle_belief.persistent_centre_probability_map()
+            self.h_artists['pc'].set_data(pc.transpose())
+            self.h_artists['pc'].set_clim([0,pc.max()])
+        
+        obsT = [xx for xx,zz in self.belief.obs if zz==True]
+        obsF = [xx for xx,zz in self.belief.obs if zz==False]
+        self.update_obs(self.h_artists['obsT'], obsT)
+        self.update_obs(self.h_artists['obsF'], obsF)
+        
+        self.h_artists['path'].set_data(self.full_path[:,0], self.full_path[:,1])
+        
+        try:
+            self.h_artists['tree'].set_offsets(self.leaf_poses)
+            self.h_artists['tree'].set_array(self.leaf_values - self.leaf_values.min())
+        except KeyError:
+            pass
+        
+        return self.h_artists.values()
+            
+    def update_obs(self, h, obs):
+        if obs != []:
+            h.set_data(*zip(*obs))        
+        
+        
+class Belief(object):
+    def __init__(self, world_model, p_z_given_x, p_z_given_x_kwargs = {}):
+        self.nx , self.ny = self.world_model.get_world_size()
+        self.x = np.arange(self.nx)
+        self.y = np.arange(self.ny)
+        self.p_uniform = 1.0/(self.nx*self.ny)
+        self.p_z_given_x = p_z_given_x
+        self.p_z_given_x_kwargs = p_z_given_x_kwargs
+        self.p_c = self.uniform_prior
+        self.reset_observations()
+        self.update_pc_map = False
     
     def add_observations(self,obs):
         self.observations.extend(obs)
@@ -193,52 +312,7 @@ class Belief(object):
             for jj,yy in enumerate(self.y):
                 Vx[ii,jj] = self.kld_utility([xx,yy])
         return Vx
-
-    def select_observation(self,target_centre):
-        future_pose = self.motion_model.get_end_points(self.get_current_pose())
-        Vx = np.array([self.kld_utility(pos[0:2]) for pos in future_pose])
-        amax = np.argmax(Vx)
-        
-        next_pose = future_pose[amax]
-        self.set_current_pose(next_pose)
-        cobs = self.generate_observations([next_pose[0:2]],c=target_centre)
-        self.add_observations(cobs)
-        return future_pose,Vx,amax
-
-    def build_likelihood_tree(self,depth=3):
-        self.likelihood_tree = LikelihoodTreeNode(
-            self.pose, 
-            self.motion_model, 
-            self.pzgc_samples, 
-            inverse_depth=depth)
-            
-    def kld_tree(self, depth=3):
-        n_yaws = self.motion_model.get_paths_number()
-        end_kld = []
-        for path in itertools.product(range(n_yaws),repeat=depth):
-            end_kld.append(self.likelihood_tree.kld_path_utility(
-                self.kld_likelihood,path))
-        #end_poses = self.motion_model.get_leaf_points(self.get_current_pose(),depth)             
-        #end_kld = np.reshape(end_kld,n_yaws*np.ones(depth,dtype='int'))
-        return end_kld
-        
-    def kld_select_obs(self,depth,target_centre):
-        Vx = np.array(self.kld_tree(depth))
-        path_max = np.unravel_index(np.argmax(Vx), self.motion_model.get_paths_number()*np.ones(depth,dtype='int'))
-        amax = path_max[0]
-        leaf_poses = self.motion_model.get_leaf_points(self.get_current_pose(),depth)
-        next_poses = self.motion_model.get_leaf_points(self.get_current_pose(),1)
-        next_pose = next_poses[amax]
-        self.prune_likelihood_tree(amax,depth)
-        self.set_current_pose(next_pose)
-        
-        cobs = self.generate_observations([next_pose[0:2]],c=target_centre)
-        self.add_observations(cobs)
-        return leaf_poses,Vx,amax
-                
-    def prune_likelihood_tree(self,selected_option,depth):
-        self.likelihood_tree.children[selected_option].add_children(depth)
-        self.likelihood_tree = self.likelihood_tree.children[selected_option]        
+  
                         
     def persistent_centre_probability_map(self):
         pI = self.mc_p_I()
@@ -250,8 +324,6 @@ class Belief(object):
         
         
 class BeliefUnshared(Belief):
-    def __init__(self, gridsize, p_z_given_x, p_z_given_x_kwargs = {}, pose=np.array([0.0,0.0,0.0]), motion_model=None):
-        super(BeliefUnshared, self).__init__(gridsize, p_z_given_x, p_z_given_x_kwargs, pose, motion_model)
 
     def reset_unshared(self):
         self.unshared_pIgc = np.ones(self.pIgc.shape)
@@ -362,10 +434,22 @@ class LikelihoodTreeNode(object):
                 #print "kld_fun called! kld_sum={0:0.3f}".format(kld_sum)
         return kld_sum
 
-          
+     
+# This should be deprecated since it is the same as kld_select_obs with depth 1 
+#def select_observation(self):
+#    future_pose = self.motion_model.get_end_points(self.get_current_pose())
+#    Vx = np.array([self.belief.kld_utility(pos[0:2]) for pos in future_pose])
+#    amax = np.argmax(Vx)
+#    
+#    next_pose = future_pose[amax]
+#    
+#    self.full_path = np.append(self.full_path, self.motion_model.get_trajectory(self.get_current_pose(),amax),axis=0)
+#    self.set_current_pose(next_pose)
+#    cobs = self.generate_observations([next_pose[0:2]])
+#    self.add_observations(cobs)
+#    return future_pose,Vx,amax     
 
 # Every so often, I look at the expectation of the KL between our current shared belief and what I would have if I kept sampling on my own
-# Compare against teh 
 
 #for obx,obz in obs:
 #            # For each added observation, update p(I|c) for the c samples

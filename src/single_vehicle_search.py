@@ -46,56 +46,59 @@ axobs.set_ylim(0,1.0)
 axobs.set_ylabel(r'$P(z(r) = T)$'); axobs.set_xlabel('Range, $r$')
 fobs.show()
 
+# World model
+world = belief_state.World(*field_size, target_location=target_centre)
+
 # Setup vehicle belief
 glider_motion = motion_models.yaw_rate_motion(max_yaw=np.pi/2.0, speed=4.0, n_yaws=5, n_points=21)
-vehicle_belief = belief_state.Belief(field_size, obs_model, obs_kwargs,motion_model=glider_motion)
-start_offsets = glider_motion.get_leaf_points(start_pose,depth=kld_depth)[:,0:2]
+vehicle = belief_state.Vehicle(world, glider_motion, obs_model, obs_kwargs, start_pose)
 
 h_fig, h_ax = plt.subplots() #1,2, sharex=True, sharey=True)
-h_cpos, = h_ax.plot([],[],'yo',fillstyle='full')
-h_pc = h_ax.imshow(np.zeros(field_size), origin='lower',vmin=0,animated=True)
-h_tgt, = h_ax.plot(target_centre[0],target_centre[1],'wx',mew=2,ms=10)
-h_start, = h_ax.plot(start_pose[0],start_pose[1],'^',color='orange',ms=8,fillstyle='full')
-h_obsF, = h_ax.plot([],[],obs_symbols[0])
-h_obsT, = h_ax.plot([],[],obs_symbols[1])
-#h_poss, = h_ax.plot([],[],'k.')
-h_poss = h_ax.scatter(start_offsets[:,0],start_offsets[:,1],20)
-h_path, = h_ax.plot([],[],'w-')
-h_ax.set_xlim(-.5, field_size[0]-0.5)
-h_ax.set_ylim(-.5, field_size[1]-0.5)
-full_path = np.array([start_pose])
-
-p_range = belief_state.TargetFinder(target_centre, vehicle_belief, target_range)
+p_range = belief_state.TargetFinder(target_centre, vehicle.belief, target_range)
 
 def init():
     global full_path
     np.random.seed(randseed)
     
-    vehicle_belief.set_current_pose(copy.copy(start_pose))
-    vehicle_belief.reset_observations()
+    vehicle.set_current_pose(copy.copy(start_pose))
+    vehicle.reset_observations()
     full_path = np.array([start_pose])
     
     # Generate MC samples
-    vehicle_belief.uniform_prior_sampler(mcsamples, set_samples=True)
-   
-    obs = vehicle_belief.generate_observations([start_pose[0:2]],c=target_centre)
-    vehicle_belief.add_observations(obs)
-    vehicle_belief.update_pc_map = False
-    vehicle_belief.build_likelihood_tree(kld_depth)
+    vehicle.belief.uniform_prior_sampler(mcsamples, set_samples=True)
+    
+    # Generate observations
+    obs = vehicle.generate_observations([start_pose[0:2]],c=target_centre)
+    vehicle.add_observations(obs)
+    vehicle.belief.update_pc_map = False
+    
+    # Build KLD likelihood tree
+    vehicle.build_likelihood_tree(kld_depth)
+    
+    # Reset target within range calculator
     p_range.reset()
-    pc = vehicle_belief.persistent_centre_probability_map()
-    h_pc.set_data(pc.transpose())
-    h_pc.set_clim([0, pc.max()])
-    h_poss.set_offsets(start_offsets)
+    
+    # Generate persistent probability map
+    pc = vehicle.belief.persistent_centre_probability_map()
+    
+    # Plotting
+    #vehicle.h_artists['pc'].set_data(pc.transpose())
+    #vehicle.h_artists['pc'].set_clim([0, pc.max()])
+    # h_poss.set_offsets(start_offsets)
+    
+    vehicle.setup_obs_plot(h_ax, tree_depth = kld_depth)
+    vehicle.update_obs_plot()
     
     if obs[0][1]:
-        h_obsT.set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==True]))
-        h_obsF.set_data([],[])
+        vehicle.h_artists['obsT'].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==True]))
+        vehicle.h_artists['obsF'].set_data([],[])
     else:
-        h_obsF.set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==False]))
-        h_obsT.set_data([],[])
+        vehicle.h_artists['obsF'].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==False]))
+        vehicle.h_artists['obsT'].set_data([],[])
     h_cpos.set_data(start_pose[0],start_pose[1])
     h_path.set_data(full_path[:,0],full_path[:,1])
+    
+    return vehicle.update_obs_plot()
     return h_pc,h_cpos,h_obsF,h_obsT,h_poss,h_tgt,h_start,h_path
 
 def animate(i):
