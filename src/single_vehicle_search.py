@@ -49,7 +49,7 @@ fobs.show()
 # World model
 world = belief_state.World(*field_size, target_location=target_centre)
 
-# Setup vehicle belief
+# Setup vehicles
 glider_motion = motion_models.yaw_rate_motion(max_yaw=np.pi/2.0, speed=4.0, n_yaws=5, n_points=21)
 vehicle = belief_state.Vehicle(world, glider_motion, obs_model, obs_kwargs, start_pose)
 
@@ -80,16 +80,17 @@ def init():
     vehicle.belief.persistent_centre_probability_map()
     
     vehicle.setup_plot(h_ax, tree_depth = kld_depth)
-    return vehicle.update_plot()
+    vehicle.update_plot()
+    return vehicle.get_artists()
 
 def animate(i):
     vehicle.kld_select_obs(kld_depth)
-
+    vehicle.update_plot()
     print "i = {0}/{1}, p_range={2}".format(i+1,n_obs, p_range.prob_mass_in_range())
-    return vehicle.update_plot()
+    return vehicle.get_artists()
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = n_obs, interval = 100, blit = True, repeat = False)
-ani.save('../vid/temp.ogv', writer = 'avconv', fps=5, codec='libtheora') #extra_args=['-vcodec', 'libx264'])
+#ani.save('../vid/temp.ogv', writer = 'avconv', fps=5, codec='libtheora') #extra_args=['-vcodec', 'libx264'])
 h_fig.show()
 
 #h_mov = []

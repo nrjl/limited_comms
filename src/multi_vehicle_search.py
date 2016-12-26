@@ -28,8 +28,8 @@ obs_kwargs = {'r':target_radius,'true_pos':0.8,'true_neg':0.8, 'decay_rate':0.35
 
 # Start state (location and heading rad)
 start_rand = np.random.rand(n_vehicles,3)
-start_pose = np.array([[x*field_size[0],y*field_size[1],(z-0.5)*2*np.pi] for x,y,z in start_rand])
-#start_pose = np.array([[18.0, 23.0, np.pi/2],[75.0, 75.0, -np.pi/2]])
+start_poses = np.array([[x*field_size[0],y*field_size[1],(z-0.5)*2*np.pi] for x,y,z in start_rand])
+#start_poses = np.array([[18.0, 23.0, np.pi/2],[75.0, 75.0, -np.pi/2]])
 
 # Prior sampler
 mcsamples = 1000
@@ -56,10 +56,14 @@ axobs.set_ylim(0,1.0)
 axobs.set_ylabel(r'$P(z(r) = T)$'); axobs.set_xlabel('Range, $r$')
 fobs.show()
 
+# World model
+world = belief_state.World(*field_size, target_location=target_centre)
+
 # Setup vehicle belief
 glider_motion = yaw_rate_motion(max_yaw=np.pi, speed=4.0, n_yaws=6, n_points=21)
-vehicle_beliefs = [belief_state.BeliefUnshared(field_size, obs_model, obs_kwargs,motion_model=glider_motion) for i in range(n_vehicles)]
-start_offsets = [glider_motion.get_leaf_points(sp,depth=kld_depth)[:,0:2] for sp in start_pose]
+vehicles = [belief_state.Vehicle(world, glider_motion, obs_model, obs_kwargs, start_pose, unshared=True) for start_pose in start_poses]
+#vehicle_beliefs = [belief_state.BeliefUnshared(field_size, obs_model, obs_kwargs,motion_model=glider_motion) for i in range(n_vehicles)]
+#start_offsets = [glider_motion.get_leaf_points(sp,depth=kld_depth)[:,0:2] for sp in start_poses]
 
 def dkl_map(vb):
     pcgI = vb.persistent_centre_probability_map()
@@ -82,127 +86,102 @@ def sync_beliefs(vbs,last_share):
 
 h_fig, h_ax = plt.subplots(1,n_vehicles) #, sharex=True, sharey=True)
 h_fig.set_size_inches(5*n_vehicles,5,forward=True)
-full_path=[[] for i in range(n_vehicles)]
-h_art = [[] for i in range(n_vehicles)]
-for i in range(n_vehicles):
-    h_art[i].append(h_ax[i].imshow(np.zeros(field_size), origin='lower',vmin=0,animated=True)) #0 Image
-    h_art[i].extend(h_ax[i].plot(target_centre[0],target_centre[1],'wx',mew=2,ms=10)) #1 Target location
-    h_art[i].extend(h_ax[i].plot(start_pose[i][0],start_pose[i][1],'yo',mew=0.5)) #2 Start location
-    h_art[i].extend(h_ax[i].plot([],[],'^',color='darksalmon',mec='w',mew=0,ms=5)) #3 Shared False
-    h_art[i].extend(h_ax[i].plot([],[],'o',color='darkseagreen',mec='w',mew=0,ms=5)) #4 Shared True
-    h_art[i].extend(h_ax[i].plot([],[],'w-',lw=2)) #5 Trajectory
-    h_art[i].extend(h_ax[i].plot([],[],'o',color='gold',ms=8,mew=0)) #6 Current position
-    h_art[i].extend(h_ax[i].plot([],[],obs_symbols[0],mew=0.5,mec='w',ms=6.5)) #7 Local False
-    h_art[i].extend(h_ax[i].plot([],[],obs_symbols[1],mew=0.5,mec='w',ms=6.5)) #8 Local True
-    #h_art[i].extend(h_ax[i].plot([],[],'k.')) #9 Possible moves
-    h_art[i].append(h_ax[i].scatter(start_offsets[i][:,0],start_offsets[i][:,1],20)) #9 Possible moves
-    h_ax[i].set_xlim(-.5, field_size[0]-0.5)
-    h_ax[i].set_ylim(-.5, field_size[1]-0.5)    
-    full_path[i].append(start_pose[i])
 
+def get_all_artists(vv):
+    all_artists = []
+    for v in vv:
+        all_artists.extend(v.get_artists())
+    return all_artists
 
 def init():
-    global full_path,curr_dkl,last_share
+    global curr_dkl,last_share
     curr_dkl = 0.1*max_dkl
     last_share = 0
     np.random.seed(randseed)
-    full_path=[[] for i in range(n_vehicles)]
-    xs = vehicle_beliefs[0].uniform_prior_sampler(mcsamples)
     
-    for i,vehicle_belief in enumerate(vehicle_beliefs):
-        vehicle_belief.set_current_pose(copy.copy(start_pose[i]))
-        vehicle_belief.reset_observations()
+    # Generate MC samples
+    xs = vehicles[0].belief.uniform_prior_sampler(mcsamples)
     
-        vehicle_belief.assign_prior_sample_set(xs)
-   
-        obs = vehicle_belief.generate_observations([start_pose[i,0:2]],c=target_centre)
-        vehicle_belief.add_observations(obs)
-        vehicle_belief.update_pc_map = False
-        vehicle_belief.build_likelihood_tree(kld_depth)
-        pc = vehicle_belief.persistent_centre_probability_map()
-        h_art[i][0].set_data(pc.transpose())
-        h_art[i][0].set_clim([0, pc.max()])
-        h_art[i][9].set_offsets(start_offsets[i])
+    for vehicle, hv in zip(vehicles, h_ax):
+        vehicle.reset()
+        vehicle.belief.assign_prior_sample_set(xs)
+        
+        # Generate observations
+        obs = vehicle.generate_observations([vehicle.get_current_pose()[0:2]],c=target_centre)
+        vehicle.add_observations(obs)
+        vehicle.belief.update_pc_map = False
+        
+        # Build KLD likelihood tree
+        vehicle.build_likelihood_tree(kld_depth)
+        
+        # Generate persistent probability map (for plotting)
+        vehicle.belief.persistent_centre_probability_map()
+        
+        vehicle.setup_plot(hv, tree_depth = kld_depth)
+        vehicle.update_plot()
     
-        if obs[0][1]:
-            h_art[i][8].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==True]))
-            h_art[i][7].set_data([],[])
-        else:
-            h_art[i][7].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs if zz==False]))
-            h_art[i][8].set_data([],[])
-        h_art[i][6].set_data(start_pose[i][0],start_pose[i][1])
-        h_art[i][3].set_data([],[])
-        h_art[i][4].set_data([],[])
-    return [item for sublist in h_art for item in sublist]
-
+    return get_all_artists(vehicles)
+    
 vehicle_set = set(range(n_vehicles))
 def animate(i):
-    global full_path, curr_dkl, last_share, current_wait
+    global curr_dkl, last_share, current_wait
     if current_wait == share_wait:
-        Fobs = [xx for xx,zz in vehicle_beliefs[0].observations if zz==False]
-        Tobs = [xx for xx,zz in vehicle_beliefs[0].observations if zz==True]
-        for hh in h_art:
-            hh[3].set_data(*zip(*Fobs))
-            hh[4].set_data(*zip(*Tobs))
+        Fobs = [xx for xx,zz in vehicles[0].belief.get_observations() if zz==False]
+        Tobs = [xx for xx,zz in vehicles[0].belief.get_observations() if zz==True]
+        for vehicle in vehicles:
+            vehicle.h_artists['shared_obsF'].set_data(*zip(*Fobs))
+            vehicle.h_artists['shared_obsT'].set_data(*zip(*Tobs))
         current_wait += 1
     elif current_wait < share_wait:
         current_wait += 1
-        return [item for sublist in h_art for item in sublist]
+        return get_all_artists(vehicles)
     
-    dd = [dkl_map(vb) for vb in vehicle_beliefs]
+    dd = [dkl_map(vehicle.belief) for vehicle in vehicles]
     vm = np.argmax(dd)
-    nobs = len(vehicle_beliefs[0].observations)
+    nobs = len(vehicles[0].get_observations())
         
     if dd[vm] > curr_dkl:
         # We share :)
         for ii in range(n_vehicles):
             other_vehicles = vehicle_set - {ii}
             for jj in other_vehicles:
-                vehicle_beliefs[ii].add_observations(vehicle_beliefs[jj].observations[last_share:nobs],vehicle_beliefs[jj].unshared_pIgc,vehicle_beliefs[jj].unshared_pIgc_map)
-        for vb in vehicle_beliefs:
-            vb.reset_unshared()
-        last_share = len(vehicle_beliefs[0].observations)
+                vehicles[ii].add_observations(vehicles[jj].get_observations()[last_share:nobs],vehicles[jj].belief.unshared_pIgc,vehicles[jj].belief.unshared_pIgc_map)
+        for vehicle in vehicles:
+            vehicle.belief.reset_unshared()
+        last_share = len(vehicles[0].get_observations())
         print "Shared at {0}".format(last_share)
         curr_dkl = dd[vm]+delta_dkl*max_dkl
         current_wait = 0
-        return [item for sublist in h_art for item in sublist]
+        return get_all_artists(vehicles)
     
     else:
-        for hh,vehicle_belief,fp in zip(h_art,vehicle_beliefs,full_path):
-            opose = vehicle_belief.get_current_pose()
-            #fposes,Vx,amax = vehicle_belief.select_observation(target_centre)
-            fposes,Vx,amax = vehicle_belief.kld_select_obs(kld_depth,target_centre)
-            Vx = Vx-Vx.min()
-            #h_poss.set_data(fposes[:,0],fposes[:,1]) #,color=plt.cm.jet(Vx/Vx.max()) 
-            fp.extend(glider_motion.get_trajectory(opose,amax))
-            hh[9].set_offsets(fposes[:,0:2])
-            hh[9].set_array(Vx)
-            #hh[9].set_data(fposes[:,0],fposes[:,1]) 
-            obs = vehicle_belief.get_observations()
-            if obs[-1][1]:
-                hh[8].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs[last_share:] if zz==True]))
-            else:
-                hh[7].set_data(*zip(*[[xx[0],xx[1]] for xx,zz in obs[last_share:] if zz==False]))
-        
-            cpos = vehicle_belief.get_current_pose()
-            hh[6].set_data(cpos[0],cpos[1])
-            pp = np.array(fp)
-            hh[5].set_data(pp[:,0],pp[:,1])
+        for vehicle in vehicles:
+            vehicle.kld_select_obs(kld_depth)
+            vehicle.update_plot()
     
     pcmax = 0.0
-    for hh,vb in zip(h_art,vehicle_beliefs):
-        pc = vb.persistent_centre_probability_map()
-        intpc = pc.sum()
-        hh[0].set_data(pc.transpose()/intpc)
-        pcmax = max(pcmax,pc.max()/intpc)
-    for hh in h_art:
-        hh[0].set_clim([0, pcmax])    
+    for vehicle in vehicles:
+        pc = vehicle.belief.persistent_centre_probability_map()
+        
+    
+    pcmax = max([v.h_artists['pc'].get_clim()[1] for v in vehicles])
+    for v in vehicles:
+        v.h_artists['pc'].set_clim([0, pcmax])
+    
+    #pcmax = 0.0
+    #for hh,vb in zip(h_art,vehicle_beliefs):
+    #    pc = vb.persistent_centre_probability_map()
+    #    intpc = pc.sum()
+    #    hh[0].set_data(pc.transpose()/intpc)
+    #    pcmax = max(pcmax,pc.max()/intpc)
+    #for hh in h_art:
+    #    hh[0].set_clim([0, pcmax])    
     
     print "i = {0}/{1}".format(i+1,n_obs)
-    return [item for sublist in h_art for item in sublist]
+    return get_all_artists(vehicles)
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = n_obs, interval = 100, blit = True, repeat = False)
-ani.save('../vid/temp.ogv', writer = 'avconv', fps=3, bitrate=5000, codec='libtheora')
+#ani.save('../vid/temp.ogv', writer = 'avconv', fps=3, bitrate=5000, codec='libtheora')
 h_fig.show()
 
 

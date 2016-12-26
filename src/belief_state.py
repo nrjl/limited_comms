@@ -45,6 +45,7 @@ class Vehicle(object):
         self.full_path = np.array([self.start_pose])    
         self.set_current_pose(pose)
         self.set_motion_model(motion_model)
+        self.unshared = unshared
         if not unshared:
             self.belief = Belief(self.world, self.obs_fun, self.obs_kwargs)
         else:
@@ -114,26 +115,28 @@ class Vehicle(object):
         self.likelihood_tree.children[selected_option].add_children(depth)
         self.likelihood_tree = self.likelihood_tree.children[selected_option]  
         
-    def setup_plot(self, h_ax, tree_depth=None, obs_symbols = ['r^','go'], start_ms=8,target_ms=10,scatter_ms=20):
+    def setup_plot(self, h_ax, tree_depth=None, obs_symbols = ['r^','go'], ms_start=8,ms_target=10,ms_scatter=20,ms_obs=6.5):
         self._plots = True
         h_ax.clear()
         self.h_ax = h_ax
         self.h_artists = {}
         self.h_artists['pc'] = self.h_ax.imshow(np.zeros(self.world.get_size()), origin='lower',vmin=0,animated=True)
-        self.h_artists['cpos'], = self.h_ax.plot([],[],'yo',fillstyle='full')
+        self.h_artists['cpos'], = self.h_ax.plot([],[],'o',color='gold',fillstyle='full',ms=ms_start,mew=0)
         target_pos = self.world.get_target_location()
-        self.h_artists['target'], = self.h_ax.plot(target_pos[0], target_pos[1],'wx',mew=2,ms=target_ms)
-        self.h_artists['start'], = self.h_ax.plot(self.start_pose[0],self.start_pose[1],'^',color='orange',ms=start_ms,fillstyle='full')
-        self.h_artists['obsF'], = self.h_ax.plot([],[],obs_symbols[0])
-        self.h_artists['obsT'], = self.h_ax.plot([],[],obs_symbols[1])
-        self.h_artists['path'], = self.h_ax.plot([],[],'w-')
+        self.h_artists['target'], = self.h_ax.plot(target_pos[0], target_pos[1],'wx',mew=2,ms=ms_target)
+        self.h_artists['start'], = self.h_ax.plot(self.start_pose[0],self.start_pose[1],'^',color='orange',ms=ms_start,fillstyle='full')
+        self.h_artists['obsF'], = self.h_ax.plot([],[],obs_symbols[0],mew=0.5,mec='w',ms=ms_obs)
+        self.h_artists['obsT'], = self.h_ax.plot([],[],obs_symbols[1],mew=0.5,mec='w',ms=ms_obs)
+        self.h_artists['path'], = self.h_ax.plot([],[],'w-',lw=2)
         self.h_ax.set_xlim(-.5, self.world.get_size()[0]-0.5)
         self.h_ax.set_ylim(-.5, self.world.get_size()[1]-0.5)
         if tree_depth is not None:
             self.leaf_poses = self.motion_model.get_leaf_points(self.start_pose,depth=tree_depth)
-            self.h_artists['tree'] = self.h_ax.scatter(self.leaf_poses[:,0],self.leaf_poses[:,1],scatter_ms)
+            self.h_artists['tree'] = self.h_ax.scatter(self.leaf_poses[:,0],self.leaf_poses[:,1],ms_scatter)
             
-        return self.h_artists['pc'],self.h_artists['cpos'],self.h_artists['target'],self.h_artists['start'],self.h_artists['obsT'],self.h_artists['obsF'],self.h_artists['path'],self.h_artists['tree'],
+        if self.unshared:
+            self.h_artists['shared_obsF'], = self.h_ax.plot([],[],'^',color='darksalmon',mec='w',mew=0,ms=ms_obs-1.5)
+            self.h_artists['shared_obsT'], = self.h_ax.plot([],[],'o',color='darkseagreen',mec='w',mew=0,ms=ms_obs-1.5)         
             
     def update_plot(self):
         cpos = self.get_current_pose()
@@ -141,6 +144,7 @@ class Vehicle(object):
         
         if self.belief.update_pc_map:
             pc = self.belief.persistent_centre_probability_map()
+            pc = pc/pc.sum()
             self.h_artists['pc'].set_data(pc.transpose())
             self.h_artists['pc'].set_clim([0,pc.max()])
         
@@ -158,14 +162,25 @@ class Vehicle(object):
             pass
         
         #return self.h_artists.values()
-        return self.h_artists['pc'],self.h_artists['cpos'],self.h_artists['target'],self.h_artists['start'],self.h_artists['obsT'],self.h_artists['obsF'],self.h_artists['path'],self.h_artists['tree'],
             
+    def get_artists(self):
+        # This is because stupid animate doesn't repsect plot order, so I can't just return h_artsists.values()
+        if self.unshared:
+            return (self.h_artists['pc'],self.h_artists['cpos'],self.h_artists['target'],
+                self.h_artists['start'],self.h_artists['obsT'],self.h_artists['obsF'],
+                self.h_artists['path'],self.h_artists['tree'],
+                self.h_artists['shared_obsT'],self.h_artists['shared_obsF'])
+        else:           
+            return (self.h_artists['pc'],self.h_artists['cpos'],self.h_artists['target'],
+                self.h_artists['start'],self.h_artists['obsT'],self.h_artists['obsF'],
+                self.h_artists['path'],self.h_artists['tree'])  
+        
     def update_obs(self, h, obs):
         if obs != []:
             h.set_data(*zip(*obs))  
                   
-    def add_observations(self, obs):
-        self.belief.add_observations(obs)
+    def add_observations(self, obs, *args, **kwargs):
+        self.belief.add_observations(obs, *args, **kwargs)
         
     def get_observations(self):
         return self.belief.get_observations()
