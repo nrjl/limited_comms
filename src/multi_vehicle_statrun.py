@@ -11,21 +11,23 @@ PLOT_ON = False
 
 class MultirobotSearch(object):
     
-    def __init__(self, fieldsize, n_robots, obs_model, obs_kwargs, motion_model, mcsamples, kld_depth=1, delta_dkl = 0.2, randseed=0):
+    def __init__(self, field_size, n_robots, obs_model, obs_kwargs, motion_model, mcsamples, kld_depth=1, delta_dkl = 0.2, randseed=0):
         # Setup vehicle belief
-        self.field_size = fieldsize
+        self.world = belief_state.World(*field_size)
         self.n_vehicles = n_robots
         self.vehicle_set = set(range(self.n_vehicles))
         self.mcsamples = mcsamples
         self.kld_depth = kld_depth
         self.randseed = randseed
         
-        self.vehicle_beliefs = [belief_state.BeliefUnshared(
-            field_size, obs_model, obs_kwargs,
-            motion_model=motion_model) for i in self.vehicle_set]
+        self.vehicles = [belief_state.Vehicle(self.world, motion_model, 
+            obs_model, obs_kwargs, unshared=True) for i in self.vehicle_set]
+        #self.vehicle_beliefs = [belief_state.BeliefUnshared(
+        #    field_size, obs_model, obs_kwargs,
+        #    motion_model=motion_model) for i in self.vehicle_set]
         
         # D_KL bounds
-        self.max_dkl = np.log(field_size[0]*field_size[1])
+        self.max_dkl = np.log(np.prod(self.world.get_size()))
         self.delta_dkl = delta_dkl
         
         # Figure handles
@@ -38,18 +40,18 @@ class MultirobotSearch(object):
         return dkl.sum()/pcgI.sum()
         
     def sync_beliefs(self):
-        cobs = self.vehicle_beliefs[-1].observations
-        cpIgc = self.vehicle_beliefs[-1].pIgc
-        cpIgc_map = self.vehicle_beliefs[-1].pIgc_map
-        for vb in self.vehicle_beliefs[:-1]:
-            cobs.extend(vb.observations[self.last_share:])
-            cpIgc *= vb.unshared_pIgc
-            cpIgc_map *= vb.unshared_pIgc_map
-        for vb in self.vehicle_beliefs:
-            vb.observations = cobs
-            vb.pIgc = cpIgc
-            vb.pIgc_map = cpIgc_map
-            vb.reset_unshared()
+        cobs = self.vehicles[-1].get_observations()
+        cpIgc = self.vehicles[-1].belief.pIgc
+        cpIgc_map = self.vehicles[-1].belief.pIgc_map
+        for v in self.vehicles[:-1]:
+            cobs.extend(v.get_observations()[self.last_share:])
+            cpIgc *= v.belief.unshared_pIgc
+            cpIgc_map *= v.belief.unshared_pIgc_map
+        for v in self.vehicles:
+            v.belief.observations = cobs
+            v.belief.pIgc = cpIgc
+            v.belief.pIgc_map = cpIgc_map
+            v.belief.reset_unshared()
 
     def reset(self):
         self.curr_dkl = self.delta_dkl*self.max_dkl
@@ -59,49 +61,46 @@ class MultirobotSearch(object):
         np.random.seed(self.randseed)
         
         # Target location
-        self.target_centre = np.random.rand(2)*np.array(self.field_size)
+        self.world.set_target_location(np.random.rand(2)*np.array(self.world.get_size()))
         
         # Start state (location and heading rad)
         start_rand = np.random.rand(self.n_vehicles,3)
-        start_pose = np.array([[x*field_size[0],y*field_size[1],(z-0.5)*2*np.pi] for x,y,z in start_rand])
+        start_poses = np.array([[x*self.world.get_size()[0],y*self.world.get_size()[1],(z-0.5)*2*np.pi] for x,y,z in start_rand])
         
-        xs = self.vehicle_beliefs[0].uniform_prior_sampler(mcsamples)
-        for i,vb in enumerate(self.vehicle_beliefs):
-            vb.set_current_pose(copy.copy(start_pose[i]))
-            vb.reset_observations()
-            vb.assign_prior_sample_set(xs)
-    
-            obs = vb.generate_observations([vb.get_current_pose()[0:2]],c=self.target_centre)
-            vb.add_observations(obs)
+        xs = self.vehicles[0].belief.uniform_prior_sampler(mcsamples)
+        for v,sp in zip(self.vehicles, start_poses):
+            v.reset(copy.copy(sp))
+            v.belief.assign_prior_sample_set(xs)
             
-            vb.build_likelihood_tree(self.kld_depth)
-            
+            obs = v.generate_observations([v.get_current_pose()[0:2]])
+            v.add_observations(obs)
+            v.build_likelihood_tree(self.kld_depth)           
     
     def step(self):
-        dd = [self.dkl_mc(vb) for vb in self.vehicle_beliefs]
+        dd = [self.dkl_mc(v.belief) for v in self.vehicles]
         vm = np.argmax(dd)
-        nobs = len(self.vehicle_beliefs[0].observations)
+        nobs = len(self.vehicles[0].get_observations())
             
         if dd[vm] > self.curr_dkl:
             # We share :)
-            for ii,vb in enumerate(self.vehicle_beliefs):
-                other_vehicles = [self.vehicle_beliefs[ovb] for ovb in (self.vehicle_set-{ii})]
-                for ovb in other_vehicles:
-                    vb.add_observations(ovb.observations[self.last_share:nobs],ovb.unshared_pIgc)
-            for vb in self.vehicle_beliefs:
-                vb.reset_unshared()
-            self.last_share = len(self.vehicle_beliefs[0].observations)
+            for ii,v in enumerate(self.vehicles):
+                other_vehicles = [self.vehicles[ovb] for ovb in (self.vehicle_set-{ii})]
+                for ov in other_vehicles:
+                    v.add_observations(ov.get_observations()[self.last_share:nobs],ov.belief.unshared_pIgc)
+            for v in self.vehicles:
+                v.belief.reset_unshared()
+            self.last_share = len(self.vehicles[0].get_observations())
             print "Total shared observations: {0}".format(self.last_share)
             self.curr_dkl = dd[vm]+self.delta_dkl*self.max_dkl
             self.number_of_shares += 1
             return True
         
         else:
-            for vb in self.vehicle_beliefs:
-                fposes,Vx,amax = vb.kld_select_obs(self.kld_depth,self.target_centre)
+            for v in self.vehicles:
+                v.kld_select_obs(self.kld_depth)
         return False
 
-n_trials = 20      # Number of trials
+n_trials = 1      # Number of trials
 max_obs = 200       # Max. observations for simulation
 n_robots = 3        # Number of vehicles
 share_cost = 0      # Cost of sharing (in # observations)
@@ -156,8 +155,8 @@ n_shares = []
 
 for trial_num in range(n_trials):
     multirobot_runner.reset()
-    target_pmass = [belief_state.TargetFinder(multirobot_runner.target_centre, vb, pmass_range) 
-        for vb in multirobot_runner.vehicle_beliefs]
+    target_pmass = [belief_state.TargetFinder(multirobot_runner.world.get_target_location(), v.belief, pmass_range) 
+        for v in multirobot_runner.vehicles]
     
     ii = 0
     pmass = [[] for jj in range(n_robots)]
@@ -182,7 +181,7 @@ for trial_num in range(n_trials):
     n_shares.append(multirobot_runner.number_of_shares)
     print "Trial {0} complete. Target found in {1} steps.".format(trial_num, ii)
     
-with open('../data/10pc_share_extra.pkl', 'wb') as fh:
+with open('../data/temp.pkl', 'wb') as fh:
     pickle.dump(trial_steps, fh)
     pickle.dump(n_shares, fh)
 

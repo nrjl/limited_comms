@@ -52,10 +52,15 @@ class Vehicle(object):
             self.belief = BeliefUnshared(self.world, self.obs_fun, self.obs_kwargs)
         self._plots = False
     
-    def reset(self):
+    def reset(self, new_start_pose=None):
+        if new_start_pose is not None:
+            self.start_pose = new_start_pose
         self.set_current_pose(self.start_pose)
         self.full_path = np.array([self.start_pose])  
         self.reset_observations()
+        
+    def set_start_pose(self, pose):
+        self.start_pose = pose
                 
     def set_current_pose(self, pose):
         self.pose = pose

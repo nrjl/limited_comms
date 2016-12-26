@@ -59,11 +59,9 @@ fobs.show()
 # World model
 world = belief_state.World(*field_size, target_location=target_centre)
 
-# Setup vehicle belief
+# Setup vehicles
 glider_motion = yaw_rate_motion(max_yaw=np.pi, speed=4.0, n_yaws=6, n_points=21)
 vehicles = [belief_state.Vehicle(world, glider_motion, obs_model, obs_kwargs, start_pose, unshared=True) for start_pose in start_poses]
-#vehicle_beliefs = [belief_state.BeliefUnshared(field_size, obs_model, obs_kwargs,motion_model=glider_motion) for i in range(n_vehicles)]
-#start_offsets = [glider_motion.get_leaf_points(sp,depth=kld_depth)[:,0:2] for sp in start_poses]
 
 def dkl_map(vb):
     pcgI = vb.persistent_centre_probability_map()
@@ -168,34 +166,9 @@ def animate(i):
     for v in vehicles:
         v.h_artists['pc'].set_clim([0, pcmax])
     
-    #pcmax = 0.0
-    #for hh,vb in zip(h_art,vehicle_beliefs):
-    #    pc = vb.persistent_centre_probability_map()
-    #    intpc = pc.sum()
-    #    hh[0].set_data(pc.transpose()/intpc)
-    #    pcmax = max(pcmax,pc.max()/intpc)
-    #for hh in h_art:
-    #    hh[0].set_clim([0, pcmax])    
-    
     print "i = {0}/{1}".format(i+1,n_obs)
     return get_all_artists(vehicles)
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = n_obs, interval = 100, blit = True, repeat = False)
 #ani.save('../vid/temp.ogv', writer = 'avconv', fps=3, bitrate=5000, codec='libtheora')
 h_fig.show()
-
-
-## SCRAP
-#import mcmc
-## MCMC sampler to sample from p_z_given_c
-#obs_lims = [[-field_size[0],-field_size[1]],[field_size[0],field_size[1]]]
-#mcmc_obsF_obj = mcmc.MCMCSampler(obs_model, obs_lims, func_kwargs=dict(obs_kwargs, z=False, c=(0,0)))
-#mcmc_obsFX,mcmc_obsFp = mcmc_obsF_obj.sample_chain(mcmc_n_samples, mcmc_burnin)
-#mcmc_obsT_obj = mcmc.MCMCSampler(obs_model, obs_lims, func_kwargs=dict(obs_kwargs, z=True, c=(0,0)))
-#mcmc_obsTX,mcmc_obsTp = mcmc_obsT_obj.sample_chain(mcmc_n_samples, mcmc_burnin)
-#np.random.shuffle(mcmc_obsFX)
-#np.random.shuffle(mcmc_obsTX)
-#
-#fig2,ax2 = plt.subplots()
-#ax2.plot(mcmc_obsFX[::100,0],mcmc_obsFX[::100,1],obs_symbols[0])
-#ax2.plot(mcmc_obsTX[::100,0],mcmc_obsTX[::100,1],obs_symbols[1])
