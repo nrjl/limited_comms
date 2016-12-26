@@ -50,7 +50,12 @@ class Vehicle(object):
         else:
             self.belief = BeliefUnshared(self.world, self.obs_fun, self.obs_kwargs)
         self._plots = False
-        
+    
+    def reset(self):
+        self.set_current_pose(self.start_pose)
+        self.full_path = np.array([self.start_pose])  
+        self.reset_observations()
+                
     def set_current_pose(self, pose):
         self.pose = pose
     
@@ -82,7 +87,7 @@ class Vehicle(object):
         end_kld = []
         for path in itertools.product(range(n_yaws),repeat=depth):
             end_kld.append(self.likelihood_tree.kld_path_utility(
-                self.kld_likelihood,path))
+                self.belief.kld_likelihood,path))
         #end_poses = self.motion_model.get_leaf_points(self.get_current_pose(),depth)             
         #end_kld = np.reshape(end_kld,n_yaws*np.ones(depth,dtype='int'))
         return end_kld
@@ -100,7 +105,7 @@ class Vehicle(object):
         
         self.set_current_pose(self.next_poses[amax])
         
-        cobs = self.generate_observations([self.get_current_pose[0:2]])
+        cobs = self.generate_observations([self.get_current_pose()[0:2]])
         self.add_observations(cobs)
         
         return amax
@@ -114,53 +119,63 @@ class Vehicle(object):
         h_ax.clear()
         self.h_ax = h_ax
         self.h_artists = {}
-        self.h_artists['cpos'], = self.h_ax.plot([],[],'yo',fillstyle='full')
         self.h_artists['pc'] = self.h_ax.imshow(np.zeros(self.world.get_size()), origin='lower',vmin=0,animated=True)
-        self.h_artists['target'], = self.h_ax.plot(*self.world.get_target_location(),'wx',mew=2,ms=target_ms)
+        self.h_artists['cpos'], = self.h_ax.plot([],[],'yo',fillstyle='full')
+        target_pos = self.world.get_target_location()
+        self.h_artists['target'], = self.h_ax.plot(target_pos[0], target_pos[1],'wx',mew=2,ms=target_ms)
         self.h_artists['start'], = self.h_ax.plot(self.start_pose[0],self.start_pose[1],'^',color='orange',ms=start_ms,fillstyle='full')
         self.h_artists['obsF'], = self.h_ax.plot([],[],obs_symbols[0])
         self.h_artists['obsT'], = self.h_ax.plot([],[],obs_symbols[1])
         self.h_artists['path'], = self.h_ax.plot([],[],'w-')
-        self.h_ax.set_xlim(-.5, self.world.get_field_size()[0]-0.5)
-        self.h_ax.set_ylim(-.5, self.world.get_field_size()[1]-0.5)
+        self.h_ax.set_xlim(-.5, self.world.get_size()[0]-0.5)
+        self.h_ax.set_ylim(-.5, self.world.get_size()[1]-0.5)
         if tree_depth is not None:
-            self.leaf_poses = self.motion_model.get_leaf_points(self.start_pose,depth=tree_depth)[:,0:2]
+            self.leaf_poses = self.motion_model.get_leaf_points(self.start_pose,depth=tree_depth)
             self.h_artists['tree'] = self.h_ax.scatter(self.leaf_poses[:,0],self.leaf_poses[:,1],scatter_ms)
             
-        return self.h_artists.values()
+        return self.h_artists['pc'],self.h_artists['cpos'],self.h_artists['target'],self.h_artists['start'],self.h_artists['obsT'],self.h_artists['obsF'],self.h_artists['path'],self.h_artists['tree'],
             
     def update_plot(self):
         cpos = self.get_current_pose()
         self.h_artists['cpos'].set_data(cpos[0], cpos[1])
         
         if self.belief.update_pc_map:
-            pc = vehicle_belief.persistent_centre_probability_map()
+            pc = self.belief.persistent_centre_probability_map()
             self.h_artists['pc'].set_data(pc.transpose())
             self.h_artists['pc'].set_clim([0,pc.max()])
         
-        obsT = [xx for xx,zz in self.belief.obs if zz==True]
-        obsF = [xx for xx,zz in self.belief.obs if zz==False]
+        obsT = [xx for xx,zz in self.belief.get_observations() if zz==True]
+        obsF = [xx for xx,zz in self.belief.get_observations() if zz==False]
         self.update_obs(self.h_artists['obsT'], obsT)
         self.update_obs(self.h_artists['obsF'], obsF)
         
         self.h_artists['path'].set_data(self.full_path[:,0], self.full_path[:,1])
         
         try:
-            self.h_artists['tree'].set_offsets(self.leaf_poses)
+            self.h_artists['tree'].set_offsets(self.leaf_poses[:,0:2])
             self.h_artists['tree'].set_array(self.leaf_values - self.leaf_values.min())
-        except KeyError:
+        except (KeyError, AttributeError):
             pass
         
-        return self.h_artists.values()
+        #return self.h_artists.values()
+        return self.h_artists['pc'],self.h_artists['cpos'],self.h_artists['target'],self.h_artists['start'],self.h_artists['obsT'],self.h_artists['obsF'],self.h_artists['path'],self.h_artists['tree'],
             
     def update_obs(self, h, obs):
         if obs != []:
-            h.set_data(*zip(*obs))        
+            h.set_data(*zip(*obs))  
+                  
+    def add_observations(self, obs):
+        self.belief.add_observations(obs)
         
+    def get_observations(self):
+        return self.belief.get_observations()
+        
+    def reset_observations(self):
+        self.belief.reset_observations()
         
 class Belief(object):
     def __init__(self, world_model, p_z_given_x, p_z_given_x_kwargs = {}):
-        self.nx , self.ny = self.world_model.get_world_size()
+        self.nx, self.ny = world_model.get_size()
         self.x = np.arange(self.nx)
         self.y = np.arange(self.ny)
         self.p_uniform = 1.0/(self.nx*self.ny)
