@@ -254,4 +254,29 @@ class EC_IG(EC_solver):
                 max_util = U #/self.Cost(test)
                 e_star = test_num
         return e_star
-                        
+   
+class EC_VoI(EC_solver):
+    def init_extras(self):
+        self._method_name = 'VoI'
+        
+    def select_test(self):
+        # Minimize prediction error in Y
+        max_util = None
+        current_err_Y = 1.0 - max(self.p_Y)
+        
+        for test_num,test in enumerate(self.tests):
+            U = 0.0
+            for test_result in range(self.n_outcomes[test_num]):
+                p_theta_new = {}
+                for theta in self.theta:
+                    p_theta_new[theta] = self.p_theta[theta]*self.test_likelihoods[theta][test_num][test_result]
+                p_xe = sum(p_theta_new.values())
+                for t in p_theta_new:
+                    p_theta_new[t] /= p_xe
+                p_Y_new = self.calculate_p_Y(p_theta_new)
+                U += p_xe*(current_err_Y - (1.0-max(p_Y_new)))
+            if U > max_util:
+                max_util = U #/self.Cost(test)
+                e_star = test_num
+        return e_star
+                

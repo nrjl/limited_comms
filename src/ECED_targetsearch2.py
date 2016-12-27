@@ -130,13 +130,14 @@ theta_prior = {t: 1.0/nT for t in Theta}
 
 # Create all the solvers
 methods = [equivalence_class_solvers.ECED,
-           #equivalence_class_solvers.EC_bayes,
+           equivalence_class_solvers.EC_bayes,
            equivalence_class_solvers.EC_random,
-           equivalence_class_solvers.EC_US]
-           #equivalence_class_solvers.EC_IG]
-solver_names = ['ECED', 'Random', 'US']  # 'EC Bayes', , 'IG'
+           equivalence_class_solvers.EC_US,
+           equivalence_class_solvers.EC_IG,
+           equivalence_class_solvers.EC_VoI]
 
 solvers = [method(Theta, r, tests, theta_prior, Theta[0]) for method in methods]
+solver_names = [solver.get_name() for solver in solvers]  # 'EC Bayes', , 'IG'
 n_solvers = len(solvers)
 
 # This contains the counts of the number of successful choices of action at each step of simulations
