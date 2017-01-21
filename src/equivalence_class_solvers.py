@@ -9,17 +9,60 @@ def discrete_entropy(p0):
         H = H-p*np.log2(p)
     return H
 
+def prior_flat_theta(r, Theta):
+    pt = 1.0/len(Theta)
+    return {t:pt for t in Theta}
+    
+def prior_flat_Y(r, Theta):
+    py = 1.0/len(r)
+    prior = {}
+    for y in r:
+        pt = py/len(y)
+        for t in y:
+            prior[t] = pt
+    return prior
 
+def select_from_prior(prior):
+    return sum(random.random() > np.cumsum(prior))
+
+def select_root_cause(r, theta, theta_prior):
+    
+    tp = [theta_prior[t] for t in theta]
+    theta_true = theta[select_from_prior(tp)]
+
+    # Work out what the correct action is from the true state
+    y_true = -1
+    for ny, y_set in enumerate(r):
+        if theta_true in y_set:
+            y_true = ny
+    if y_true == -1:
+        raise LookupError('Root cause {0} not found in r'.format(theta_true))
+
+    return theta_true, y_true
+
+class ExampleTest(object):
+    # Example useless test to demonstrate minimum requirements
+    def __init__(self, epsilon=0.05, cost=1.0):
+        self.n_outcomes = 2
+        self.eps = epsilon
+        self.cost = cost
+        
+    def outcome_likelihood(self, theta):
+        return [1.0-self.epsilon, self.epsilon]
+    
 class EC_solver(object):
+    # Theta is an array of hypothesis objects
+    # r is an array where each element is a set() of hypotheses, so union(r) = Theta
+    # tests is an array of test objects, where each object must have member:
+    #       - n_outcomes integer variable 
+    #       - cost float variable that returns the cost of running the test
+    #       - outcome_likelihood(theta) fn that returns a vector of outcome probabilities given a root cause
     def __init__(self, theta, r, tests, prior_theta, true_theta):
         self.theta = theta
         self.r = r
         self.tests = tests
         self.n_tests = len(self.tests)
         self.prior_theta = prior_theta
-        
-        # Get number of possible outcomes for each test
-        self.n_outcomes = [len(test(self.theta[0])) for test in self.tests]
         
         # Build lambda matrix and test likelihoods
         self.lambda_full = {}
@@ -28,7 +71,7 @@ class EC_solver(object):
             lambda_theta = [] # Tests are ordered!!
             like_theta = []
             for test in self.tests:
-                pXe = test(theta)
+                pXe = test.outcome_likelihood(theta)
                 maxpXe = max(pXe)
                 lambda_theta.append([pxe/maxpXe for pxe in pXe])
                 like_theta.append(pXe)
@@ -69,7 +112,7 @@ class EC_solver(object):
         return 0
     
     def run_test(self,test_num):
-        pXe = self.tests[test_num](self.true_theta)
+        pXe = self.tests[test_num].outcome_likelihood(self.true_theta)
         return sum(random.random() > np.cumsum(pXe))
         
     def add_result(self, test_num, result):
@@ -125,9 +168,9 @@ class ECED(EC_solver):
                     
         # Build offsets (since they can be precalculated)
         self.offsets = []
-        for test_num in range(self.n_tests):
+        for test_num,test in enumerate(self.tests):
             offset_test = []
-            for test_result in range(self.n_outcomes[test_num]):
+            for test_result in range(test.n_outcomes):
                 alltheta = [self.lambda_full[theta][test_num][test_result] for theta in self.theta]
                 offset = 1.0 - (max(alltheta))**2
                 offset_test.append(offset)
@@ -158,14 +201,15 @@ class ECED(EC_solver):
         for test_num,test in enumerate(self.tests):
             # Now, for each possible outcome of each test
             U = 0.0
-            for test_result in range(self.n_outcomes[test_num]):
+            for test_result in range(test.n_outcomes):
                 p_xe = 0.0
                 for theta in self.theta:
                     p_theta = self.p_theta[theta]
                     p_xe += p_theta*self.test_likelihoods[theta][test_num][test_result]
                 U += p_xe*(self.delta_BS(test_num,test_result) - self.delta_OFF(test_num,test_result))
+            # U *= test.cost
             if U > max_util:
-                max_util = U #/self.Cost(test)
+                max_util = U
                 e_star = test_num
         return e_star
     
@@ -187,7 +231,7 @@ class EC_bayes(ECED):
         for test_num,test in enumerate(self.tests):
             # Now, for each possible outcome of each test
             U = 0.0
-            for test_result in range(self.n_outcomes[test_num]):
+            for test_result in range(test.n_outcomes):
                 p_xe = 0.0
                 for theta in self.theta:
                     p_theta = self.p_theta[theta]
@@ -196,8 +240,9 @@ class EC_bayes(ECED):
                     px_t1 = self.test_likelihoods[e[0]][test_num][test_result]
                     px_t2 = self.test_likelihoods[e[1]][test_num][test_result]
                     U += p_xe*self.w_E[e]*(1.0-px_t1*px_t2)
+            # U *= test.cost
             if U > max_util:
-                max_util = U #/self.Cost(test)
+                max_util = U
                 e_star = test_num
         return e_star
 
@@ -219,15 +264,16 @@ class EC_US(EC_solver):
         max_util = None
         for test_num,test in enumerate(self.tests):
             U = 0.0
-            for test_result in range(self.n_outcomes[test_num]):
+            for test_result in range(test.n_outcomes):
                 p_theta_new = np.zeros(len(self.theta))
                 for ti,theta in enumerate(self.theta):
                     p_theta_new[ti] = self.p_theta[theta]*self.test_likelihoods[theta][test_num][test_result]
                 p_xe = p_theta_new.sum()
                 p_theta_new = p_theta_new/p_xe
                 U += p_xe*(H_theta - discrete_entropy(p_theta_new))
+            # U *= test.cost
             if U > max_util:
-                max_util = U #/self.Cost(test)
+                max_util = U
                 e_star = test_num
         return e_star
                         
@@ -241,7 +287,7 @@ class EC_IG(EC_solver):
         max_util = None
         for test_num,test in enumerate(self.tests):
             U = 0.0
-            for test_result in range(self.n_outcomes[test_num]):
+            for test_result in range(test.n_outcomes):
                 p_theta_new = {}
                 for theta in self.theta:
                     p_theta_new[theta] = self.p_theta[theta]*self.test_likelihoods[theta][test_num][test_result]
@@ -250,8 +296,9 @@ class EC_IG(EC_solver):
                     p_theta_new[t] /= p_xe
                 p_Y_new = self.calculate_p_Y(p_theta_new)
                 U += p_xe*(H_Y - discrete_entropy(p_Y_new))
+            # U *= test.cost
             if U > max_util:
-                max_util = U #/self.Cost(test)
+                max_util = U
                 e_star = test_num
         return e_star
    
@@ -266,7 +313,7 @@ class EC_VoI(EC_solver):
         
         for test_num,test in enumerate(self.tests):
             U = 0.0
-            for test_result in range(self.n_outcomes[test_num]):
+            for test_result in range(test.n_outcomes):
                 p_theta_new = {}
                 for theta in self.theta:
                     p_theta_new[theta] = self.p_theta[theta]*self.test_likelihoods[theta][test_num][test_result]
@@ -275,8 +322,9 @@ class EC_VoI(EC_solver):
                     p_theta_new[t] /= p_xe
                 p_Y_new = self.calculate_p_Y(p_theta_new)
                 U += p_xe*(current_err_Y - (1.0-max(p_Y_new)))
+            # U *= test.cost
             if U > max_util:
-                max_util = U #/self.Cost(test)
+                max_util = U
                 e_star = test_num
         return e_star
                 

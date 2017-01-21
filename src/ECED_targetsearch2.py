@@ -77,8 +77,10 @@ nT = len(Theta)
 class LocationTest(object):
     def __init__(self, test_pos):
         self.pos = test_pos
+        self.n_outcomes = 2
+        self.cost = 1.0
 
-    def run_test(self, theta):
+    def outcome_likelihood(self, theta):
         # If the hypothesis position is the same as the true position, then the
         # likelihood of returning True is true_positive
         true_positive = 0.8
@@ -88,13 +90,13 @@ class LocationTest(object):
             p_true = 1.0-true_positive
         return [1.0-p_true, p_true]  # [p_false, p_true]
 
-
 # The type test tests the target type
 class TypeTest(object):
     def __init__(self, test_type):
         self.typ = test_type
+        self.n_outcomes = 2
 
-    def run_test(self,theta):
+    def outcome_likelihood(self,theta):
         true_positive = 0.8
         if theta[1] == self.typ:
             p_true = true_positive
@@ -102,11 +104,14 @@ class TypeTest(object):
             p_true = 1.0-true_positive
         return [1.0-p_true, p_true]
 
+    def cost(self):
+        return 1.0
+
 
 # The nearby test is like the location test but covers a wider range (i.e likely to return true if within distance 4,
 # slightly less likely to return true if within distance 8, otherwise unlikely to return true
 class NearbyTest(LocationTest):
-    def run_test(self, theta):
+    def outcome_likelihood(self, theta):
         true_positive = 0.8
         if abs(theta[0]-self.pos) < nearby_width:
             p_true = true_positive
@@ -123,10 +128,11 @@ testclasses.extend([NearbyTest(pp) for pp in range(n_positions)])
 testclasses.extend([TypeTest(tt) for tt in range(n_types)])
 
 # Tests actually need to be functions, so pull out functions
-tests = [tc.run_test for tc in testclasses]
+# tests = [tc.run_test for tc in testclasses]
+tests = testclasses
 
 # Prior over possible states (uniform)
-theta_prior = {t: 1.0/nT for t in Theta}
+theta_prior = equivalence_class_solvers.prior_flat_theta(r,Theta)
 
 # Create all the solvers
 methods = [equivalence_class_solvers.ECED,
