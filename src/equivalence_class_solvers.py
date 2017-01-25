@@ -153,7 +153,7 @@ class EC_solver(object):
         result = self.run_test(best_test)
         self.add_result(best_test, result)
         if self.verbose:
-            print 'Select test: {0}s,  Add result: {1}s'.format(t1-t0, time.time()-t1)            
+            print '{4} selected test {0} in {1:0.2f}s, Added result {2} in {3:0.2f}s'.format(best_test, t1-t0, result, time.time()-t1, self.get_name())            
         return best_test,result
                                 
     def predict_y(self):

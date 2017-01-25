@@ -88,10 +88,11 @@ map_p = -1*np.ones((n_sims, max_tests, n_solvers), dtype='float')
 # This is a sanity check to check how many times each test is being selected by each method
 test_picks = np.zeros((len(tests), n_solvers), dtype='int')
 
-random.seed(0)
-random.jumpahead(500)
+
 
 for ii in range(n_sims):
+    random.seed(ii)
+    
     # For each simulation, select a random true root cause
     theta_true, y_true = equivalence_class_solvers.select_root_cause(r, Theta, theta_prior)
     print "Run {0}/{1} - True theta: {2}, True y: {3}".format(ii+1, n_sims, theta_true, Y[y_true])
@@ -110,7 +111,6 @@ for ii in range(n_sims):
             if active_tests[ns]:
                 tnow = time.time()
                 test_num,result = solver.step()
-                if verbose: print 'Step time ({0}): {1}s'.format(solver.get_name(),time.time()-tnow)
                 y_predicted,map_p_y = solver.predict_y()
                 correct = (y_predicted == y_true)
                 correct_predictions[ii,jj,ns] = correct
