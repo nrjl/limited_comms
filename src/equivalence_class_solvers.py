@@ -1,7 +1,7 @@
 import numpy as np
 import copy
 import random
-
+import time
 
 def discrete_entropy(p0):
     H = 0.0
@@ -57,27 +57,35 @@ class EC_solver(object):
     #       - n_outcomes integer variable 
     #       - cost float variable that returns the cost of running the test
     #       - outcome_likelihood(theta) fn that returns a vector of outcome probabilities given a root cause
-    def __init__(self, theta, r, tests, prior_theta, true_theta):
+    def __init__(self, theta, r, tests, prior_theta, true_theta, verbose=False):
         self.theta = theta
         self.r = r
         self.tests = tests
         self.n_tests = len(self.tests)
         self.prior_theta = prior_theta
+        self.verbose = verbose
+        if verbose:
+            print ('Constructing EC solver object with {0} hypotheses, {1} classes '+
+            'and {2} tests.').format(len(self.theta),len(self.r),self.n_tests)
         
         # Build lambda matrix and test likelihoods
+        if self.verbose:
+            tnow = time.time()
+            print 'Constructing test likelihood and lambda matrices...',
         self.lambda_full = {}
         self.test_likelihoods = {}
         for theta in self.theta:
             lambda_theta = [] # Tests are ordered!!
             like_theta = []
             for test in self.tests:
-                pXe = test.outcome_likelihood(theta)
+                pXe = np.array(test.outcome_likelihood(theta))
                 maxpXe = max(pXe)
-                lambda_theta.append([pxe/maxpXe for pxe in pXe])
+                lambda_theta.append(pXe/maxpXe) #[pxe/maxpXe for pxe in pXe])
                 like_theta.append(pXe)
             self.lambda_full[theta] = lambda_theta
             self.test_likelihoods[theta] = like_theta
-
+        if self.verbose:
+            print 'done in {0}s'.format(time.time()-tnow)
         self._method_name = 'EC Default'
         self.init_extras()
         self.reset(true_theta)
@@ -137,9 +145,15 @@ class EC_solver(object):
         return
     
     def step(self):
+        if self.verbose:
+            t0 = time.time()
         best_test = self.select_test()
+        if self.verbose:
+            t1 = time.time()
         result = self.run_test(best_test)
         self.add_result(best_test, result)
+        if self.verbose:
+            print 'Select test: {0}s,  Add result: {1}s'.format(t1-t0, time.time()-t1)            
         return best_test,result
                                 
     def predict_y(self):
@@ -157,6 +171,9 @@ class ECED(EC_solver):
         self._method_name = 'ECED'
 
         # Construct edges:
+        if self.verbose:
+            tnow = time.time()
+            print 'Constructing EC graph and offsets...',
         self.E = set()
         theta_set = set(self.theta)
         for rY in self.r:
@@ -169,19 +186,44 @@ class ECED(EC_solver):
         # Build offsets (since they can be precalculated)
         self.offsets = []
         for test_num,test in enumerate(self.tests):
-            offset_test = []
+            offset_test = np.zeros(test.n_outcomes, dtype='float')
             for test_result in range(test.n_outcomes):
                 alltheta = [self.lambda_full[theta][test_num][test_result] for theta in self.theta]
-                offset = 1.0 - (max(alltheta))**2
-                offset_test.append(offset)
+                offset_test[test_result] = 1.0 - (max(alltheta))**2
             self.offsets.append(offset_test)
-
+        
+        self.build_edge_lambda()
+        self.delta_diff_mat = [[] for i in range(len(self.tests))]
+                    
+        if self.verbose:
+            print 'done in {0}s.'.format(time.time()-tnow)
 
     def reset_extras(self):
         self.w_E = {}
         for e in self.E:
             self.w_E[e] = self.p_theta[e[0]]*self.p_theta[e[1]]
+        self.update_delta_diff_mat()
+    
+    def build_edge_lambda(self):
+        self.edge_lambda = {}
+        for edge in self.E:
+            test_lambda = []
+            for test_num,test in enumerate(self.tests):
+                lam_theta = self.lambda_full[edge[0]][test_num] 
+                lam_thetap = self.lambda_full[edge[1]][test_num]
+                offset = self.offsets[test_num]
+                test_lambda.append(1.0-lam_theta*lam_thetap-offset)
+            self.edge_lambda[edge] = test_lambda
+    
+    def update_delta_diff_mat(self):
+        for test_num,test in enumerate(self.tests):
+            self.delta_diff_mat[test_num] = np.zeros(test.n_outcomes, dtype='float')
         
+        for edge in self.E:            # Remember edge is theta pair
+            for test_num,test in enumerate(self.tests):
+                e_test = self.w_E[edge]*self.edge_lambda[edge][test_num]
+                self.delta_diff_mat[test_num] += e_test            
+                
     def delta_BS(self,test_num,test_result):
         delta = 0.0
         for edge in self.E:
@@ -195,6 +237,14 @@ class ECED(EC_solver):
         for edge in self.E:
             delta += self.w_E[edge]*self.offsets[test_num][test_result]
         return delta
+        
+    def delta_diff(self, test_num, test_result):
+        delta = 0.0
+        for edge in self.E:
+            lam_theta = self.lambda_full[edge[0]][test_num][test_result]
+            lam_thetap = self.lambda_full[edge[1]][test_num][test_result]
+            delta += self.w_E[edge]*(1.0-lam_theta*lam_thetap-self.offsets[test_num][test_result])
+        return delta
                 
     def select_test(self):
         max_util = None
@@ -206,45 +256,70 @@ class ECED(EC_solver):
                 for theta in self.theta:
                     p_theta = self.p_theta[theta]
                     p_xe += p_theta*self.test_likelihoods[theta][test_num][test_result]
-                U += p_xe*(self.delta_BS(test_num,test_result) - self.delta_OFF(test_num,test_result))
-            # U *= test.cost
+                # U += p_xe*(self.delta_BS(test_num,test_result) - self.delta_OFF(test_num,test_result))
+                # U += p_xe*self.delta_diff(test_num,test_result)
+                U += p_xe*self.delta_diff_mat[test_num][test_result]
+            # U /= test.cost
             if U > max_util:
                 max_util = U
                 e_star = test_num
         return e_star
     
     def add_result_extras(self, test_num, result):
-        # Update edge weights
+        self.update_edge_weights(test_num, result)
+        self.update_delta_diff_mat()
+        
+    def update_edge_weights(self, test_num, result):
         for e in self.E:
             px_t1 = self.test_likelihoods[e[0]][test_num][result]
             px_t2 = self.test_likelihoods[e[1]][test_num][result]
-            self.w_E[e] = self.w_E[e]*px_t1*px_t2
-
+            self.w_E[e] = self.w_E[e]*px_t1*px_t2        
 
 class EC_bayes(ECED):
     def init_extras(self):
         super(EC_bayes, self).init_extras()
         self._method_name = 'EC Bayes'
-
+    
+    def build_edge_lambda(self):
+        self.edge_lambda = {}
+        for edge in self.E:
+            test_lambda = []
+            for test_num,test in enumerate(self.tests):
+                px_t1 = self.test_likelihoods[edge[0]][test_num]
+                px_t2 = self.test_likelihoods[edge[1]][test_num]
+                test_lambda.append((1.0-px_t1*px_t2))
+            self.edge_lambda[edge] = test_lambda    
+    
+    def update_delta_diff_mat(self):
+        for test_num,test in enumerate(self.tests):
+            self.delta_diff_mat[test_num] = np.zeros(test.n_outcomes, dtype='float')
+        
+        for edge in self.E:            # Remember edge is theta pair
+            for test_num,test in enumerate(self.tests):
+                e_test = self.w_E[edge]*self.edge_lambda[edge][test_num]
+                self.delta_diff_mat[test_num] += e_test   
+                
     def select_test(self):
         max_util = None
-        for test_num,test in enumerate(self.tests):
-            # Now, for each possible outcome of each test
+        for test_num,test in enumerate(self.tests): # For each test
             U = 0.0
-            for test_result in range(test.n_outcomes):
+            for test_result in range(test.n_outcomes): # For each possible outcome of each test
                 p_xe = 0.0
                 for theta in self.theta:
                     p_theta = self.p_theta[theta]
                     p_xe += p_theta*self.test_likelihoods[theta][test_num][test_result]
-                for e in self.E:
-                    px_t1 = self.test_likelihoods[e[0]][test_num][test_result]
-                    px_t2 = self.test_likelihoods[e[1]][test_num][test_result]
-                    U += p_xe*self.w_E[e]*(1.0-px_t1*px_t2)
-            # U *= test.cost
+                #for e in self.E:
+                #    px_t1 = self.test_likelihoods[e[0]][test_num][test_result]
+                #    px_t2 = self.test_likelihoods[e[1]][test_num][test_result]
+                #    U += p_xe*self.w_E[e]*(1.0-px_t1*px_t2)
+                U += p_xe*self.delta_diff_mat[test_num][test_result]
+            # U /= test.cost
             if U > max_util:
                 max_util = U
                 e_star = test_num
         return e_star
+        
+    
 
 class EC_random(EC_solver):
     def init_extras(self):
@@ -271,7 +346,7 @@ class EC_US(EC_solver):
                 p_xe = p_theta_new.sum()
                 p_theta_new = p_theta_new/p_xe
                 U += p_xe*(H_theta - discrete_entropy(p_theta_new))
-            # U *= test.cost
+            # U /= test.cost
             if U > max_util:
                 max_util = U
                 e_star = test_num
@@ -296,7 +371,7 @@ class EC_IG(EC_solver):
                     p_theta_new[t] /= p_xe
                 p_Y_new = self.calculate_p_Y(p_theta_new)
                 U += p_xe*(H_Y - discrete_entropy(p_Y_new))
-            # U *= test.cost
+            # U /= test.cost
             if U > max_util:
                 max_util = U
                 e_star = test_num
@@ -322,7 +397,7 @@ class EC_VoI(EC_solver):
                     p_theta_new[t] /= p_xe
                 p_Y_new = self.calculate_p_Y(p_theta_new)
                 U += p_xe*(current_err_Y - (1.0-max(p_Y_new)))
-            # U *= test.cost
+            # U /= test.cost
             if U > max_util:
                 max_util = U
                 e_star = test_num

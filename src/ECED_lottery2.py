@@ -3,34 +3,48 @@ import random
 import lottery_problem
 import equivalence_class_solvers
 import matplotlib.pyplot as plt
+import time
 
-n_sims =  5                  # Number of simulated tests to run
-max_tests = 100               # Max tests in each simulation
-termination_threshold = 0.05  # Max probability of error threshold
-    
+n_sims =  100                 # Number of simulated tests to run
+max_tests = 101               # Max tests in each simulation
+termination_threshold = 0.00  # Max probability of error threshold
+
+verbose = True    
 # Based on the lottery payoff learning problem from:
 # Chen, Hassani, Krause. "Near-optimal Bayesian Active Learning
 # with Correlated and Noisy Tests." https://arxiv.org/abs/1605.07334
 
 # Construct test lotteries
-lottery_payoff = [-10, 0, 10]
+lottery_payoff = (-10, 0, 10)
 pp = [.01,.1,.2,.3,.4,.5,.6,.7,.8,.9,.99]#0.0,
 p_lottery_set = lottery_problem.lottery_builder(pp)
 tests = lottery_problem.fixed_payoff_lottery_tests(p_lottery_set, lottery_payoff)
 
 # Create hypotheses (parameterised economic models)
 crra_theta = [.2, .4, .6, .8, 1.0]
-crra_wealth = 100
-crra_all = [(t, crra_wealth) for t in crra_theta]
+crra_wealth = [100]
+crra_all = [(t, w) for t in crra_theta for w in crra_wealth]
 
 pt_rho = [0.5, 0.62, 0.74, 0.86, 0.98, 1.1]
 pt_lambda = [1, 1.5, 2, 2.5, 3.0]
 pt_alpha = [0.4, 0.52, 0.64, 0.76, 0.88, 1.0]
 pt_all = [(r,l,a) for r in pt_rho for l in pt_lambda for a in pt_alpha]
 
+mvs_w_mean = [0.6, 0.7, 0.8, 0.9, 1.0]
+mvs_w_var = [0.0005, 0.0025, 0.0045, 0.0065, 0.085,0.0105]
+mvs_w_skew = [0, 1e-4, 2e-4, 3e-4, 4e-4, 5e-4]
+mvs_all = [(m,v,s) for m in mvs_w_mean for v in mvs_w_var for s in mvs_w_skew]
+
+smvs_w_mean = [0.6, 0.7, 0.8, 0.9, 1.0]
+smvs_w_std = [0.05, 0.15, 0.25, 0.35, 0.45, 0.0105]
+smvs_w_sskew = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+smvs_all = [(m,v,s) for m in smvs_w_mean for v in smvs_w_std for s in smvs_w_sskew]
+
 method_pairs = [(lottery_problem.ExpectedValue, [0]), 
             (lottery_problem.ConstantRelativeRiskAversion, crra_all), 
-            (lottery_problem.ProspectTheory, pt_all)]
+            (lottery_problem.ProspectTheory, pt_all),
+            #(lottery_problem.MeanVarianceSkewness, mvs_all),
+            (lottery_problem.StandardizedMeanVarianceSkewness, smvs_all)]
 
 # Create Theta (ordered array of hypotheses) and r (array of theta sets grouped by Y):
 Y = []
@@ -53,19 +67,23 @@ methods = [equivalence_class_solvers.ECED,
            equivalence_class_solvers.EC_IG,
            equivalence_class_solvers.EC_VoI]
 
-solvers = [method(Theta, r, tests, theta_prior, Theta[0]) for method in methods]
+solvers = [method(Theta, r, tests, theta_prior, Theta[0], verbose=verbose) for method in methods]
 solver_names = [solver.get_name() for solver in solvers]  # 'EC Bayes', , 'IG'
 n_solvers = len(solvers)
 
-# This contains the counts of the number of successful choices of action at each step of simulations
-correct_predictions = np.zeros((max_tests, n_solvers))
+# Binary matrix of whether the action prediction was correct at each step
+correct_predictions = np.zeros((n_sims, max_tests, n_solvers), dtype='bool')
+
+# Counts of the number of successful choices of action at each step of simulations
+n_correct = np.zeros((max_tests, n_solvers))
 
 # Number of steps to termination
 steps_to_term = np.ones((n_sims, n_solvers), dtype='int')*max_tests
 correct_at_term = np.zeros((n_sims, n_solvers), dtype='bool')
 
 # Prediction confidence (mean MAP p(y))
-map_p = np.zeros((max_tests, n_solvers))
+mean_map_p = np.zeros((max_tests, n_solvers), dtype='float')
+map_p = -1*np.ones((n_sims, max_tests, n_solvers), dtype='float')
 
 # This is a sanity check to check how many times each test is being selected by each method
 test_picks = np.zeros((len(tests), n_solvers), dtype='int')
@@ -90,13 +108,17 @@ for ii in range(n_sims):
     while jj < max_tests and any(active_tests):
         for ns, solver in enumerate(solvers):
             if active_tests[ns]:
+                tnow = time.time()
                 test_num,result = solver.step()
+                if verbose: print 'Step time ({0}): {1}s'.format(solver.get_name(),time.time()-tnow)
                 y_predicted,map_p_y = solver.predict_y()
                 correct = (y_predicted == y_true)
+                correct_predictions[ii,jj,ns] = correct
                 if correct:
-                    correct_predictions[jj, ns] += 1
+                    n_correct[jj, ns] += 1
                 test_picks[test_num, ns] += 1
-                map_p[jj, ns] += (map_p_y-map_p[jj, ns])/(ii+1)
+                map_p[ii, jj, ns] += map_p_y
+                mean_map_p[jj, ns] += (map_p_y-mean_map_p[jj, ns])/(ii+1)
                 if 1.0 - map_p_y < termination_threshold:
                     active_tests[ns] = False
                     steps_to_term[ii, ns] = jj+1
@@ -113,7 +135,8 @@ for ii in range(n_sims):
 
 hf, ha = plt.subplots()
 for ii in range(len(solvers)):
-    ha.plot(correct_predictions[:, ii]/n_sims, label=solver_names[ii])
+    n_active = [sum(steps_to_term[:, ii] > jj) for jj in range(max_tests)]
+    ha.plot(n_correct[:, ii]/n_active, label=solver_names[ii])
 ha.set_xlabel('Number of tests executed')
 ha.set_ylabel('Correct action predictions')
 ha.legend(loc=0)

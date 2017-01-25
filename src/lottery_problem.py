@@ -38,7 +38,7 @@ def fixed_payoff_lottery_tests(prob, payoff):
 #            lottery_builder_loop(pp, loop_depth-1, lottery_set, cval2.append(p))
 
 def binary_softmax(u0,u1):
-    s0 = 1.0/(1.0 + np.exp(u1-u0))
+    s0 = 1.0/(1.0 + np.exp(2*(u1-u0)))
     return [s0,1.0-s0]
 
 def softmax_selector(u0,u1):
@@ -51,6 +51,7 @@ class Lottery(object):
         self.prob = prob
         self.payoff = payoff
         self.isvalid()
+        self._mean_var_skew()
         
     def isvalid(self):
         lp,lv = len(self.prob), len(self.payoff)
@@ -60,6 +61,17 @@ class Lottery(object):
         
         if abs(np.sum(self.prob) - 1.0) > 1e-5:
             raise ValueError('Probabilities don''t sum to 1.0')
+            
+    def _mean_var_skew(self):
+        mean, var, skew = 0.0,0.0,0.0
+        for pi,vi in zip(self.prob, self.payoff):
+            mean += pi*vi
+        for pi,vi in zip(self.prob, self.payoff):
+            var += ((vi-mean)**2)*pi
+            skew += ((vi-mean)**3)*pi
+        self.mean, self.var, self.skew = mean, var, skew
+        self.std = np.sqrt(var)
+        self.sskew = skew/(self.std**3)
 
 # Actual test functions:
 class LotteryTest(object):
@@ -97,9 +109,7 @@ class EconomicUtility(object):
         
 class ExpectedValue(EconomicUtility):
     def _utility(self, lottery):
-        U = 0.0
-        for pi,vi in zip(lottery.prob, lottery.payoff):
-            U += pi*vi
+        U = lottery.mean
         return U
         
     @staticmethod
@@ -107,14 +117,37 @@ class ExpectedValue(EconomicUtility):
         return 'EV'
 
 class MeanVarianceSkewness(EconomicUtility):
+    def extra_init(self):
+        try:
+            self.w_mean, self.w_var,self.w_skew = self.params
+        except ValueError:
+            print 'Params input should contain three items; w_mean, w_var, w_skew'
+            raise 
+    
     def _utility(self, lottery):
-        # Not sure how to get skewness...
-        return 1.0
+        U = self.w_mean*lottery.mean - self.w_var*lottery.var + self.w_skew*lottery.skew
+        return U
         
     @staticmethod
     def get_name():
         return 'MVS'
-              
+
+class StandardizedMeanVarianceSkewness(EconomicUtility):
+    def extra_init(self):
+        try:
+            self.w_mean, self.w_std,self.w_sskew = self.params
+        except ValueError:
+            print 'Params input should contain three items; w_mean, w_std, w_sskew'
+            raise 
+    
+    def _utility(self, lottery):
+        U = self.w_mean*lottery.mean - self.w_std*lottery.std + self.w_sskew*lottery.sskew
+        return U
+        
+    @staticmethod
+    def get_name():
+        return 'SMVS'              
+                                          
 class ProspectTheory(EconomicUtility):
     def extra_init(self):
         try:
@@ -161,4 +194,3 @@ class ConstantRelativeRiskAversion(EconomicUtility):
     @staticmethod
     def get_name():
         return 'CRRA'
-        
