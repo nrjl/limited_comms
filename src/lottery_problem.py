@@ -22,9 +22,9 @@ def lottery_builder(pp):
     return p_L
 
 # If all have same payoff, generate vector of tests
-def fixed_payoff_lottery_tests(prob, payoff):
+def fixed_payoff_lottery_tests(prob, payoff, *args, **kwargs):
     lottery_pairs = list(itertools.combinations(prob,2))
-    tests = [LotteryTest(Lottery(p0,payoff),Lottery(p1,payoff)) for p0,p1 in lottery_pairs]
+    tests = [LotteryTest(Lottery(p0,payoff),Lottery(p1,payoff), *args, **kwargs) for p0,p1 in lottery_pairs]
     
     return tests        
     
@@ -37,13 +37,9 @@ def fixed_payoff_lottery_tests(prob, payoff):
 #            cval2 = copy.copy(cval)
 #            lottery_builder_loop(pp, loop_depth-1, lottery_set, cval2.append(p))
 
-def binary_softmax(u0,u1):
-    s0 = 1.0/(1.0 + np.exp(2*(u1-u0)))
+def binary_softmax(u0,u1,k=1.0):
+    s0 = 1.0/(1.0 + np.exp(k*(u1-u0)))
     return [s0,1.0-s0]
-
-def softmax_selector(u0,u1):
-    p = binary_softmax(u0,u1)
-    return random.uniform < p[0]
 
 # Lottery class:
 class Lottery(object):
@@ -73,19 +69,20 @@ class Lottery(object):
         self.std = np.sqrt(var)
         self.sskew = skew/(self.std**3)
 
-# Actual test functions:
+# Lottery test class (i.e comparison between two lotteries):
 class LotteryTest(object):
-    def __init__(self, L1, L2, cost=1.0):
+    def __init__(self, L1, L2, cost=1.0, softmax_k=1.0):
         self.n_outcomes = 2
         self.L1 = L1
         self.L2 = L2
         self.cost = cost
+        self.softmax_k = softmax_k
         
     def outcome_likelihood(self, theta):
         # A hypothesis theta is an object with a lottery_value(L) member fn
         U1 = theta.lottery_value(self.L1)
         U2 = theta.lottery_value(self.L2)
-        return binary_softmax(U1,U2)
+        return binary_softmax(U1,U2,k=self.softmax_k)
 
 class EconomicUtility(object):
     def __init__(self, params):

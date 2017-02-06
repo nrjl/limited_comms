@@ -4,30 +4,42 @@ import lottery_problem
 import equivalence_class_solvers
 import matplotlib.pyplot as plt
 import time
+import os
+import pickle
 
 n_sims =  100                 # Number of simulated tests to run
-max_tests = 101               # Max tests in each simulation
+max_tests =  51               # Max tests in each simulation
 termination_threshold = 0.00  # Max probability of error threshold
 
-verbose = True    
+softmax_k = 10.0              # Logistic function steepness (higher is less noise)
+
+verbose = False
+write_files = True
+
 # Based on the lottery payoff learning problem from:
 # Chen, Hassani, Krause. "Near-optimal Bayesian Active Learning
 # with Correlated and Noisy Tests." https://arxiv.org/abs/1605.07334
+
+# Time stamp string
+nowstr = time.strftime("%Y_%m_%d-%H_%M")
+outdir = '../data/lottery/'+nowstr+'/'
+if not os.path.exists(outdir):
+    os.makedirs(outdir)
 
 # Construct test lotteries
 lottery_payoff = (-10, 0, 10)
 pp = [.01,.1,.2,.3,.4,.5,.6,.7,.8,.9,.99]#0.0,
 p_lottery_set = lottery_problem.lottery_builder(pp)
-tests = lottery_problem.fixed_payoff_lottery_tests(p_lottery_set, lottery_payoff)
+tests = lottery_problem.fixed_payoff_lottery_tests(p_lottery_set, lottery_payoff, softmax_k=softmax_k)
 
 # Create hypotheses (parameterised economic models)
 crra_theta = [.2, .4, .6, .8, 1.0]
 crra_wealth = [100]
 crra_all = [(t, w) for t in crra_theta for w in crra_wealth]
 
-pt_rho = [0.5, 0.62, 0.74, 0.86, 0.98, 1.1]
-pt_lambda = [1, 1.5, 2, 2.5, 3.0]
-pt_alpha = [0.4, 0.52, 0.64, 0.76, 0.88, 1.0]
+pt_rho = [0.5, 0.74, 0.86, 1.1] # [0.5, 0.62, 0.74, 0.86, 0.98, 1.1]
+pt_lambda = [1, 2, 3.0] # [1, 1.5, 2, 2.5, 3.0]
+pt_alpha = [0.4, 0.6, 0.8, 1.0] # [0.4, 0.52, 0.64, 0.76, 0.88, 1.0]
 pt_all = [(r,l,a) for r in pt_rho for l in pt_lambda for a in pt_alpha]
 
 mvs_w_mean = [0.6, 0.7, 0.8, 0.9, 1.0]
@@ -35,9 +47,9 @@ mvs_w_var = [0.0005, 0.0025, 0.0045, 0.0065, 0.085,0.0105]
 mvs_w_skew = [0, 1e-4, 2e-4, 3e-4, 4e-4, 5e-4]
 mvs_all = [(m,v,s) for m in mvs_w_mean for v in mvs_w_var for s in mvs_w_skew]
 
-smvs_w_mean = [0.6, 0.7, 0.8, 0.9, 1.0]
-smvs_w_std = [0.05, 0.15, 0.25, 0.35, 0.45, 0.0105]
-smvs_w_sskew = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+smvs_w_mean = [0.6, 0.8, 1.0] # [0.6, 0.7, 0.8, 0.9, 1.0]
+smvs_w_std = [0.05, 0.25, 0.45] # [0.05, 0.15, 0.25, 0.35, 0.45]
+smvs_w_sskew = [0, 0.2, 0.35, 0.5] # [0, 0.1, 0.2, 0.3, 0.4, 0.5]
 smvs_all = [(m,v,s) for m in smvs_w_mean for v in smvs_w_std for s in smvs_w_sskew]
 
 method_pairs = [(lottery_problem.ExpectedValue, [0]), 
@@ -91,11 +103,14 @@ test_picks = np.zeros((len(tests), n_solvers), dtype='int')
 
 
 for ii in range(n_sims):
-    random.seed(ii)
+    random.seed(100+ii)
     
     # For each simulation, select a random true root cause
     theta_true, y_true = equivalence_class_solvers.select_root_cause(r, Theta, theta_prior)
     print "Run {0}/{1} - True theta: {2}, True y: {3}".format(ii+1, n_sims, theta_true, Y[y_true])
+    if verbose:
+        print '{0:<10}|{1:<8}|{2:<8}|{3:<8}|{4:<8}|{5}'.format('Method', 
+            'Test', 'Result', 'Time (s)', 'Y_max', 'p(Y)')
 
     # Reset all the solvers with the true state
     for solver in solvers:
@@ -107,11 +122,18 @@ for ii in range(n_sims):
 
     # Run solvers
     while jj < max_tests and any(active_tests):
+        if verbose:
+            print '{0}---------------'.format(jj)
+        
         for ns, solver in enumerate(solvers):
             if active_tests[ns]:
                 tnow = time.time()
                 test_num,result = solver.step()
                 y_predicted,map_p_y = solver.predict_y()
+                if verbose:
+                    print '{0:<10}|{1:<8}|{2:<8}|{3:8.2f}|{4:<8}|{5:0.3f}'.format(
+                        solver.get_name(), test_num, result, time.time()-tnow, Y[y_predicted], map_p_y)
+
                 correct = (y_predicted == y_true)
                 correct_predictions[ii,jj,ns] = correct
                 if correct:
@@ -124,7 +146,8 @@ for ii in range(n_sims):
                     steps_to_term[ii, ns] = jj+1
                     correct_at_term[ii, ns] = correct
         jj += 1
-    print steps_to_term[ii, :]
+    for ns, solver in enumerate(solvers):
+        print
 
 #print test_picks
 #hf, ha = plt.subplots()
@@ -143,7 +166,7 @@ ha.legend(loc=0)
 
 hpf,hpa = plt.subplots()
 for ii in range(len(solvers)):
-    hpa.plot(1.0-map_p[:, ii], label=solver_names[ii])
+    hpa.plot(1.0-mean_map_p[:, ii], label=solver_names[ii])
 hpa.set_xlabel('Number of tests executed')
 hpa.set_ylabel(r'Error probability ($1-\max_{y}p(y|\psi)$)')
 hpa.legend(loc=0)
@@ -157,4 +180,11 @@ print "Correct at termination: {0}".format(['{:.2f}'.format(i) for i in np.sum(c
 # hpa.set_ylabel(r'Correct prediction at termination $\%$')
 # hpa.legend(loc=0)
 
+if write_files:
+    with open(outdir+'results.pkl', 'wb') as fh:
+        pickle.dump(correct_predictions, fh)
+        pickle.dump(map_p, fh)
+        pickle.dump(n_correct, fh)
+        pickle.dump(mean_map_p, fh)
+        pickle.dump(steps_to_term, fh)        
 plt.show()
