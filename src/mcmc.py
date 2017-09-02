@@ -6,6 +6,7 @@ class Enum(set):
             return name
         raise AttributeError
         
+# Alternative samplers not supported :)
 Samplers = Enum(['Metropolis', 'MetropolisHastings', 'Gibbs'])
 
 class MCMCSampler(object):

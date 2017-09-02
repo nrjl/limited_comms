@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import mcmc
-plt.style.use('ggplot')
+#plt.style.use('ggplot')
 
 def gauss_test(x):
     return np.exp(-(x[0]+2)**2/2.0 - (x[1]+2)**2/4) + np.exp(-(x[0]-1)**2/4.0 - (x[1]-2)**2/5.0) # x[0]+5.0

@@ -57,13 +57,16 @@ class EC_solver(object):
     #       - n_outcomes integer variable 
     #       - cost float variable that returns the cost of running the test
     #       - outcome_likelihood(theta) fn that returns a vector of outcome probabilities given a root cause
-    def __init__(self, theta, r, tests, prior_theta, true_theta=[], verbose=False):
+    def __init__(self, theta, r, tests, prior_theta, true_theta=[], verbose=False, test_repeats=False, test_outcomes=None):
         self.theta = theta
         self.r = r
         self.tests = tests
         self.n_tests = len(self.tests)
+        self._available_tests = range(self.n_tests)
         self.prior_theta = prior_theta
         self.verbose = verbose
+        self.test_repeats = False       # Allow tests to be performed multiple times
+        self.test_outcomes = test_outcomes    # Prior specification of test outcomes (persistent noise)
         if verbose:
             print ('Constructing EC solver object with {0} hypotheses, {1} classes '+
             'and {2} tests.').format(len(self.theta),len(self.r),self.n_tests)
@@ -90,12 +93,15 @@ class EC_solver(object):
         self.init_extras()
         self.reset(true_theta)
         
-    def reset(self, true_theta):
+    def reset(self, true_theta, test_outcomes=None):
         self.p_theta = copy.copy(self.prior_theta)
         self.p_Y = np.zeros(len(self.r))
         self.update_p_Y()
         self.evidence = []
         self.true_theta = true_theta
+        if test_outcomes is not None:
+            self.test_outcomes = test_outcomes
+        self._available_tests = range(self.n_tests)
         self.reset_extras()
 
     def init_extras(self):
@@ -120,8 +126,12 @@ class EC_solver(object):
         return 0
     
     def run_test(self,test_num):
-        pXe = self.tests[test_num].outcome_likelihood(self.true_theta)
-        return sum(random.random() > np.cumsum(pXe))
+        if self.test_outcomes is None:
+            pXe = self.tests[test_num].outcome_likelihood(self.true_theta)
+            test_result = sum(random.random() > np.cumsum(pXe))
+        else:
+            test_result = self.test_outcomes[test_num]
+        return test_result
         
     def add_result(self, test_num, result):
         # Add to evidence list
@@ -148,6 +158,8 @@ class EC_solver(object):
         best_test = self.select_test()
         result = self.run_test(best_test)
         self.add_result(best_test, result)
+        if not self.test_repeats:
+            self._available_tests.remove(best_test)
         return best_test,result
                                 
     def predict_y(self):
@@ -179,7 +191,8 @@ class ECED(EC_solver):
                     
         # Build offsets (since they can be precalculated)
         self.offsets = []
-        for test_num,test in enumerate(self.tests):
+        for test_num in self._available_tests:
+            test = self.tests[test_num]
             offset_test = np.zeros(test.n_outcomes, dtype='float')
             for test_result in range(test.n_outcomes):
                 alltheta = [self.lambda_full[theta][test_num][test_result] for theta in self.theta]
@@ -214,12 +227,13 @@ class ECED(EC_solver):
             delta_diff_mat.append(np.zeros(test.n_outcomes, dtype='float'))
         
         for edge in self.E:            # Remember edge is theta pair
-            for test_num,test in enumerate(self.tests):
+            for test_num in self._available_tests:
                 e_test = self.w_E[edge]*self.edge_lambda[edge][test_num]
                 delta_diff_mat[test_num] += e_test       
         
         max_util = None
-        for test_num,test in enumerate(self.tests):
+        for test_num in self._available_tests:
+            test = self.tests[test_num]
             # Now, for each possible outcome of each test
             U = 0.0
             for test_result in range(test.n_outcomes):
@@ -265,7 +279,7 @@ class EC_random(EC_solver):
         self._method_name = 'Random'
 
     def select_test(self):
-        return random.randint(0,self.n_tests-1)
+        return random.choice(self._available_tests)
 
 
 class EC_US(EC_solver):
@@ -277,7 +291,8 @@ class EC_US(EC_solver):
         H_theta = discrete_entropy(self.p_theta.values())
         max_util = None
         p_theta_new = np.zeros(len(self.theta))
-        for test_num,test in enumerate(self.tests):
+        for test_num in self._available_tests:
+            test = self.tests[test_num]
             U = 0.0
             for test_result in range(test.n_outcomes):
                 for ti,theta in enumerate(self.theta):
@@ -300,7 +315,8 @@ class EC_IG(EC_solver):
         H_Y = discrete_entropy(self.p_Y)
         max_util = None
         p_theta_new = {}
-        for test_num,test in enumerate(self.tests):
+        for test_num in self._available_tests:
+            test = self.tests[test_num]
             U = 0.0
             for test_result in range(test.n_outcomes):
                 for theta in self.theta:
@@ -352,7 +368,8 @@ class EC_VoI(EC_solver):
         max_util = None
         current_err_Y = 1.0 - max(self.p_Y)
         p_theta_new = {}
-        for test_num,test in enumerate(self.tests):
+        for test_num in self._available_tests:
+            test = self.tests[test_num]
             U = 0.0
             for test_result in range(test.n_outcomes):
                 for theta in self.theta:

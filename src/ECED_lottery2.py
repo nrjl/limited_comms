@@ -2,23 +2,28 @@ import numpy as np
 import random
 import lottery_problem
 import equivalence_class_solvers
-import matplotlib.pyplot as plt
+import plot_lottery
 import time
 import os
 import pickle
+import matplotlib.pyplot as plt
 
-n_sims =  100                 # Number of simulated tests to run
+n_sims =  400                 # Number of simulated tests to run
 max_tests =  51               # Max tests in each simulation
 termination_threshold = 0.00  # Max probability of error threshold
+seed_start = 200              # Random seed start
 
 softmax_k = 10.0              # Logistic function steepness (higher is less noise)
 
-verbose = False
+verbose = True
 write_files = True
+persistent_noise = True       # Test results are fixed with persistent noise, and tests are not repeated
 
 # Based on the lottery payoff learning problem from:
 # Chen, Hassani, Krause. "Near-optimal Bayesian Active Learning
 # with Correlated and Noisy Tests." https://arxiv.org/abs/1605.07334
+
+# NOTE THAT TESTS CANNOT BE REPEATED!! (It is assumed that the outcome will not change, so-called persistent noise)
 
 # Time stamp string
 nowstr = time.strftime("%Y_%m_%d-%H_%M")
@@ -79,7 +84,7 @@ methods = [equivalence_class_solvers.ECED,
            equivalence_class_solvers.EC_IG,
            equivalence_class_solvers.EC_VoI]
 
-solvers = [method(Theta, r, tests, theta_prior, Theta[0], verbose=verbose) for method in methods]
+solvers = [method(Theta, r, tests, theta_prior, Theta[0], verbose=verbose, test_repeats=(not persistent_noise)) for method in methods]
 solver_names = [solver.get_name() for solver in solvers]  # 'EC Bayes', , 'IG'
 n_solvers = len(solvers)
 
@@ -99,11 +104,10 @@ map_p = -1*np.ones((n_sims, max_tests, n_solvers), dtype='float')
 
 # This is a sanity check to check how many times each test is being selected by each method
 test_picks = np.zeros((len(tests), n_solvers), dtype='int')
-
-
+test_results=None
 
 for ii in range(n_sims):
-    random.seed(100+ii)
+    random.seed(seed_start+ii)
     
     # For each simulation, select a random true root cause
     theta_true, y_true = equivalence_class_solvers.select_root_cause(r, Theta, theta_prior)
@@ -112,16 +116,21 @@ for ii in range(n_sims):
         print '{0:<10}|{1:<8}|{2:<8}|{3:<8}|{4:<8}|{5}'.format('Method', 
             'Test', 'Result', 'Time (s)', 'Y_max', 'p(Y)')
 
+    # If using persistent noise, pre-calculate all test outcomes:
+    if persistent_noise:
+        pXe_all = [test.outcome_likelihood(theta_true) for test in tests]
+        test_results = [sum(random.random() > np.cumsum(pXe)) for pXe in pXe_all]
+
     # Reset all the solvers with the true state
     for solver in solvers:
-        solver.reset(theta_true)
+        solver.reset(theta_true, test_outcomes=test_results)
 
     # Counter for number of tests and which tests are still active
     active_tests = np.ones(n_solvers, dtype='bool')
     jj = 0
 
     # Run solvers
-    while jj < max_tests and any(active_tests):
+    while any(active_tests):
         if verbose:
             print '{0}---------------'.format(jj)
         
@@ -131,8 +140,8 @@ for ii in range(n_sims):
                 test_num,result = solver.step()
                 y_predicted,map_p_y = solver.predict_y()
                 if verbose:
-                    print '{0:<10}|{1:<8}|{2:<8}|{3:8.2f}|{4:<8}|{5:0.3f}'.format(
-                        solver.get_name(), test_num, result, time.time()-tnow, Y[y_predicted], map_p_y)
+                    print '{0:<10}|{1:<8}|{2:<8}|{3:8.2f}|{4:<8}|{5:0.3f}|{6:<8}'.format(
+                        solver.get_name(), test_num, result, time.time()-tnow, Y[y_predicted], map_p_y, len(solver._available_tests))
 
                 correct = (y_predicted == y_true)
                 correct_predictions[ii,jj,ns] = correct
@@ -141,7 +150,7 @@ for ii in range(n_sims):
                 test_picks[test_num, ns] += 1
                 map_p[ii, jj, ns] += map_p_y
                 mean_map_p[jj, ns] += (map_p_y-mean_map_p[jj, ns])/(ii+1)
-                if 1.0 - map_p_y < termination_threshold:
+                if (jj+1 >= max_tests) or (1.0 - map_p_y < termination_threshold):
                     active_tests[ns] = False
                     steps_to_term[ii, ns] = jj+1
                     correct_at_term[ii, ns] = correct
@@ -149,42 +158,19 @@ for ii in range(n_sims):
     for ns, solver in enumerate(solvers):
         print
 
-#print test_picks
-#hf, ha = plt.subplots()
-#ha.boxplot(steps_to_term, labels=solver_names)
-#ha.set_xlabel('Method')
-#ha.set_ylabel('Observations to termination')
-# ha.legend(loc=0)
-
-hf, ha = plt.subplots()
-for ii in range(len(solvers)):
-    n_active = [sum(steps_to_term[:, ii] > jj) for jj in range(max_tests)]
-    ha.plot(n_correct[:, ii]/n_active, label=solver_names[ii])
-ha.set_xlabel('Number of tests executed')
-ha.set_ylabel('Correct action predictions')
-ha.legend(loc=0)
-
-hpf,hpa = plt.subplots()
-for ii in range(len(solvers)):
-    hpa.plot(1.0-mean_map_p[:, ii], label=solver_names[ii])
-hpa.set_xlabel('Number of tests executed')
-hpa.set_ylabel(r'Error probability ($1-\max_{y}p(y|\psi)$)')
-hpa.legend(loc=0)
-
-
-print "Mean tests at termination: {0}".format(np.mean(steps_to_term, axis=0))
-print "Correct at termination: {0}".format(['{:.2f}'.format(i) for i in np.sum(correct_at_term, axis=0)*100.0/n_sims])
-# hpf,hpa = plt.subplots()
-# hpa.bar(np.arange(n_solvers), np.sum(correct_at_term, axis=0)*100.0/n_sims)
-# hpa.set_xlabel('Method')
-# hpa.set_ylabel(r'Correct prediction at termination $\%$')
-# hpa.legend(loc=0)
-
 if write_files:
     with open(outdir+'results.pkl', 'wb') as fh:
         pickle.dump(correct_predictions, fh)
         pickle.dump(map_p, fh)
         pickle.dump(n_correct, fh)
         pickle.dump(mean_map_p, fh)
-        pickle.dump(steps_to_term, fh)        
+        pickle.dump(steps_to_term, fh)
+
+print "Mean tests at termination: {0}".format(np.mean(steps_to_term, axis=0))
+print "Correct at termination: {0}".format(['{:.2f}'.format(i) for i in np.sum(correct_at_term, axis=0)*100.0/n_sims])
+
+hf, ha = plot_lottery.plot_action_predictions(solver_names, n_correct, steps_to_term, max_tests)
+hpf, hpa = plot_lottery.plot_error_probabilities(solver_names, mean_map_p)
+hcf, hca = plot_lottery.plot_correct_at_term(solver_names, correct_at_term, n_sims)
+
 plt.show()

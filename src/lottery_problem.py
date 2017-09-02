@@ -191,3 +191,7 @@ class ConstantRelativeRiskAversion(EconomicUtility):
     @staticmethod
     def get_name():
         return 'CRRA'
+
+
+class LotteryResult(object):
+    def __init__(self):
