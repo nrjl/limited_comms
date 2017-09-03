@@ -41,13 +41,12 @@ class Graph(object):
     def get_vertex(self, id):
         return self.V[id]
 
-    def add_edge(self, u, v, weight = 0):
-        assert
-        self.V[u.get_id()].add_neighbor(self.V[v.], cost)
-        self.vert_dict[to].add_neighbor(self.vert_dict[frm], cost)
+    def add_edge(self, u_id, v_id, weight = 0):
+        assert u_id in self.V and v_id in self.V, "Vertex ID not found, vertices must be in graph before edge can be added"
+        self.V[u_id].add_neighbor(self.V[v_id], weight)
 
     def get_vertices(self):
-        return self.vert_dict.keys()
+        return self.V.values()
 
 class Vertex(object):
     def __init__(self, id, location):
