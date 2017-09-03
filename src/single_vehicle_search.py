@@ -11,7 +11,7 @@ plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
 randseed = 1
 
 # Number of observations for simulation
-n_obs = 10
+n_obs = 100
 
 # Truth data
 field_size = (100,100)
@@ -19,14 +19,14 @@ target_centre = np.array([62.0,46.0])
 target_radius = 15.0
 
 # KLD tree search depth
-kld_depth = 1
+kld_depth = 2
 
 # Target range for target finder (50% probability mass in 1% of area near true target)
 target_range = np.sqrt((field_size[0]*field_size[1]/100.0)/np.pi)
 
 # Observation model
 obs_model = sensor_models.logistic_obs
-obs_kwargs = {'r':target_radius,'true_pos':0.9,'true_neg':0.9, 'decay_rate':0.35}
+obs_kwargs = {'r':target_radius,'true_pos':0.8,'true_neg':0.8, 'decay_rate':0.35}
 
 # Start state (location and heading rad)
 start_pose = np.array([18.0, 23.0, np.pi/2])
