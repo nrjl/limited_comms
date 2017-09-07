@@ -8,6 +8,7 @@ def step_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9):
         
 # Continuous function (logistic)
 def logistic_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9, decay_rate=0.25):
+    # High decay rate is sharp dropoff
     if z==True:
         return true_pos - (true_pos+true_neg-1.0)/(1+np.exp(-decay_rate*(np.linalg.norm(x-c)-r)))
     else:

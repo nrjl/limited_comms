@@ -6,7 +6,7 @@ import motion_models
 import belief_state
 import copy
 plt.style.use('ggplot')
-plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
+# plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
 randseed = 1
 
@@ -26,7 +26,7 @@ target_range = np.sqrt((field_size[0]*field_size[1]/100.0)/np.pi)
 
 # Observation model
 obs_model = sensor_models.logistic_obs
-obs_kwargs = {'r':target_radius,'true_pos':0.8,'true_neg':0.8, 'decay_rate':0.35}
+obs_kwargs = {'r':target_radius,'true_pos':0.9,'true_neg':0.9, 'decay_rate':0.35}
 
 # Start state (location and heading rad)
 start_pose = np.array([18.0, 23.0, np.pi/2])

@@ -39,8 +39,8 @@ obs_symbols = ['r^','go']
 
 # D_KL bounds
 max_dkl = np.log(field_size[0]*field_size[1])
-delta_dkl = 0.2
-curr_dkl = 0.1*max_dkl
+delta_dkl = 0.1
+curr_dkl = 0.05*max_dkl
 last_share = 0
 
 # How long to wait when there's a share frame
