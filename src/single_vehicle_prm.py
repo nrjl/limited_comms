@@ -23,6 +23,9 @@ field_size = (100, 100)
 target_centre = np.array([62.0, 46.0])
 target_radius = 15.0
 
+# KLD tree search depth
+kld_depth = 2
+
 # PRM graph
 prm_nodes = 10
 roadmap = prm.PRM([[0.0,field_size[0]],[0,field_size[1]]], prm_nodes, type='kPRM*')
@@ -38,8 +41,7 @@ print roadmap.G
 target_range = np.sqrt((field_size[0] * field_size[1] / 100.0) / np.pi)
 
 # Observation model
-obs_model = sensor_models.logistic_obs
-obs_kwargs = {'r': target_radius, 'true_pos': 0.8, 'true_neg': 0.8, 'decay_rate': 0.35}
+obs_model = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
 
 # Start state
 start_state = random.choice(roadmap.G.V.keys())
@@ -51,13 +53,8 @@ mcsamples = 3000
 obs_symbols = ['r^', 'go']
 
 # Plot sensor curve
-xx = np.linspace(0, 3 * target_radius, 101)
-yy = [obs_model(x, True, c=0, **obs_kwargs) for x in xx]
-fobs, axobs = plt.subplots()
-axobs.plot(xx, yy)
-axobs.set_ylim(0, 1.0)
-axobs.set_ylabel(r'$P(z(r) = T)$');
-axobs.set_xlabel('Range, $r$')
+fobs,axobs = plt.subplots()
+obs_model.plot(axobs)
 fobs.show()
 
 # World model
@@ -65,7 +62,7 @@ world = belief_state.World(*field_size, target_location=target_centre)
 
 # Setup vehicles
 vehicle_motion = prm.GraphMotion(roadmap.G)
-vehicle = belief_state.GraphVehicle(world, vehicle_motion, obs_model, obs_kwargs, start_state)
+vehicle = prm.GraphVehicle(world, vehicle_motion, obs_model.likelihood, start_state)
 
 p_range = belief_state.TargetFinder(target_centre, vehicle.belief, target_range)
 
@@ -79,9 +76,10 @@ def init():
 
     # Generate MC samples
     vehicle.belief.uniform_prior_sampler(mcsamples, set_samples=True)
+    vehicle.reset_mc_likelihood()
 
     # Generate observations
-    obs = vehicle.generate_observations([start_pose[0:2]], c=target_centre)
+    obs = vehicle.generate_observations([vehicle.get_current_pose()])
     vehicle.add_observations(obs)
     vehicle.belief.update_pc_map = False
 

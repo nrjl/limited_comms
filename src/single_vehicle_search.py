@@ -25,8 +25,7 @@ kld_depth = 2
 target_range = np.sqrt((field_size[0]*field_size[1]/100.0)/np.pi)
 
 # Observation model
-obs_model = sensor_models.logistic_obs
-obs_kwargs = {'r':target_radius,'true_pos':0.9,'true_neg':0.9, 'decay_rate':0.35}
+obs_model = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
 
 # Start state (location and heading rad)
 start_pose = np.array([18.0, 23.0, np.pi/2])
@@ -38,12 +37,8 @@ mcsamples = 3000
 obs_symbols = ['r^','go']
 
 # Plot sensor curve
-xx = np.linspace(0,3*target_radius,101)
-yy = [obs_model(x,True,c=0,**obs_kwargs) for x in xx]
 fobs,axobs = plt.subplots()
-axobs.plot(xx,yy)
-axobs.set_ylim(0,1.0)
-axobs.set_ylabel(r'$P(z(r) = T)$'); axobs.set_xlabel('Range, $r$')
+obs_model.plot(axobs)
 fobs.show()
 
 # World model
@@ -51,7 +46,7 @@ world = belief_state.World(*field_size, target_location=target_centre)
 
 # Setup vehicles
 glider_motion = motion_models.yaw_rate_motion(max_yaw=np.pi/2.0, speed=4.0, n_yaws=5, n_points=21)
-vehicle = belief_state.Vehicle(world, glider_motion, obs_model, obs_kwargs, start_pose)
+vehicle = belief_state.Vehicle(world, glider_motion, obs_model.likelihood, start_state=start_pose)
 
 p_range = belief_state.TargetFinder(target_centre, vehicle.belief, target_range)
 
@@ -66,7 +61,7 @@ def init():
     vehicle.belief.uniform_prior_sampler(mcsamples, set_samples=True)
     
     # Generate observations
-    obs = vehicle.generate_observations([start_pose[0:2]],c=target_centre)
+    obs = vehicle.generate_observations([vehicle.get_current_pose()])
     vehicle.add_observations(obs)
     vehicle.belief.update_pc_map = False
     

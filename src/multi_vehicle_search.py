@@ -21,10 +21,8 @@ target_radius = 15.0
 kld_depth = 2
 
 # Observation model
-obs_model = sensor_models.logistic_obs
-obs_kwargs = {'r':target_radius,'true_pos':0.8,'true_neg':0.8, 'decay_rate':0.35}
-#obs_model = sensor_models.step_obs
-#obs_kwargs = {'r':target_radius,'true_pos':0.9,'true_neg':0.9}
+obs_model = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
+# obs_model = sensor_models.DiscreteStep(r=target_radius, true_pos=0.9, true_neg=0.9)
 
 # Start state (location and heading rad)
 start_rand = np.random.rand(n_vehicles,3)
@@ -48,12 +46,8 @@ share_wait = 5
 current_wait = share_wait+1
 
 # Plot sensor curve
-xx = np.linspace(0,3*target_radius,101)
-yy = [obs_model(x,True,c=0,**obs_kwargs) for x in xx]
 fobs,axobs = plt.subplots()
-axobs.plot(xx,yy)
-axobs.set_ylim(0,1.0)
-axobs.set_ylabel(r'$P(z(r) = T)$'); axobs.set_xlabel('Range, $r$')
+obs_model.plot(axobs)
 fobs.show()
 
 # World model
@@ -61,7 +55,7 @@ world = belief_state.World(*field_size, target_location=target_centre)
 
 # Setup vehicles
 glider_motion = yaw_rate_motion(max_yaw=np.pi, speed=4.0, n_yaws=6, n_points=21)
-vehicles = [belief_state.Vehicle(world, glider_motion, obs_model, obs_kwargs, start_pose, unshared=True) for start_pose in start_poses]
+vehicles = [belief_state.Vehicle(world, glider_motion, obs_model.likelihood, start_pose, unshared=True) for start_pose in start_poses]
 
 def dkl_map(vb):
     pcgI = vb.persistent_centre_probability_map()
@@ -105,7 +99,7 @@ def init():
         vehicle.belief.assign_prior_sample_set(xs)
         
         # Generate observations
-        obs = vehicle.generate_observations([vehicle.get_current_pose()[0:2]],c=target_centre)
+        obs = vehicle.generate_observations([vehicle.get_current_pose()],c=target_centre)
         vehicle.add_observations(obs)
         vehicle.belief.update_pc_map = False
         

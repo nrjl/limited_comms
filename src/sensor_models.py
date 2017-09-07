@@ -1,18 +1,58 @@
 import numpy as np
+
+class BinaryLogisticObs(object):
+    def __init__(self, r=30.0, true_pos=0.95, true_neg=0.9, decay_rate=0.25):
+        self.r = r
+        self.true_pos = true_pos
+        self.true_neg = true_neg
+        self.decay_rate = decay_rate
+
+    def likelihood(self, x, z, c):
+        if z == True:
+            return self.true_pos - (self.true_pos + self.true_neg - 1.0) / (
+                1 + np.exp(-self.decay_rate * (np.linalg.norm(x[0:len(c)] - c) - self.r)))
+        else:
+            return 1.0 - self.likelihood(x, True, c)
+
+    def plot(self, axobs, n_range=3.0, nx=101):
+        xx = np.atleast_2d(np.linspace(0, n_range*self.r, nx)).T
+        yy = [self.likelihood(x, True, c=np.array([0.0])) for x in xx]
+        axobs.plot(xx, yy)
+        axobs.set_ylim(0, 1.0)
+        axobs.set_xlim(0, xx[-1][0])
+        axobs.set_ylabel(r'$P(z(r) = T)$')
+        axobs.set_xlabel('Range, $r$')
+
+class DiscreteStep(BinaryLogisticObs):
+    def __init__(self, r=30.0, true_pos=0.95, true_neg=0.9):
+        self.r = r
+        self.true_pos = true_pos
+        self.true_neg = true_neg
+
+    def likelihood(self, x, z, c):
+        if z == True:
+            return self.true_pos - (self.true_pos + self.true_neg - 1.0) * (np.linalg.norm(x[0:len(c)] - c) > self.r)
+        else:
+            return 1.0 - step_obs(x, True, c)
+
+
+
 # Discrete function (step)
 def step_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9):
     if z==True:
-        return true_pos - (true_pos+true_neg-1.0)*(np.linalg.norm(x-c) > r)
+        return true_pos - (true_pos+true_neg-1.0)*(np.linalg.norm(x[0:len(c)]-c) > r)
     else:
         return 1.0 - step_obs(x,True,c,r,true_pos,true_neg)
-        
+
+
+
 # Continuous function (logistic)
 def logistic_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9, decay_rate=0.25):
     # High decay rate is sharp dropoff
     if z==True:
-        return true_pos - (true_pos+true_neg-1.0)/(1+np.exp(-decay_rate*(np.linalg.norm(x-c)-r)))
+        return true_pos - (true_pos+true_neg-1.0)/(1+np.exp(-decay_rate*(np.linalg.norm(x[0:len(c)]-c)-r)))
     else:
-        return 1.0-logistic_obs(x,True,c,r, true_pos=0.95, true_neg=0.9)
+        return 1.0-logistic_obs(x,True,c,r, true_pos, true_neg)
         
 def arc_samples(c, r, t1, t2, n=6):
     ang = np.linspace(t1*np.pi/180, t2*np.pi/180,n)

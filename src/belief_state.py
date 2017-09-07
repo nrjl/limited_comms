@@ -41,28 +41,35 @@ class Vehicle(object):
     # This class defines an exploring vehicle that makes observations and maintains a belief over a target location by
     # selecting actions that maximise the KLD over the target belief
 
-    def __init__(self, world, motion_model, obs_fun, obs_kwargs={}, start_state=0, unshared=False):
+    def __init__(self, world, motion_model, obs_fun, start_state=0, unshared=False, *args, **kwargs):
         self.world = world
         self.motion_model = motion_model
         self.obs_fun = obs_fun
-        self.obs_kwargs = obs_kwargs
         self.start_state = start_state
         self.set_current_state(start_state)
         self.full_path = np.array([self.get_current_pose()])
         self.set_motion_model(motion_model)
         self.unshared = unshared
         if not unshared:
-            self.belief = Belief(self.world, self.obs_fun, self.obs_kwargs)
+            self.belief = Belief(self.world, self.obs_fun)
         else:
-            self.belief = BeliefUnshared(self.world, self.obs_fun, self.obs_kwargs)
+            self.belief = BeliefUnshared(self.world, self.obs_fun)
         self._plots = False
-    
+        self._init_extras(*args, **kwargs)
+
+    def _init_extras(self, *args, **kwargs):
+        pass
+
     def reset(self, new_start_state=None):
         if new_start_state is not None:
             self.start_state = new_start_state
         self.set_current_state(self.start_state)
         self.full_path = np.array([self.get_current_pose()])
         self.reset_observations()
+        self._reset_extras()
+
+    def _reset_extras(self):
+        pass
         
     def set_start_state(self, state):
         self.start_state = state
@@ -91,7 +98,7 @@ class Vehicle(object):
             c = self.world.get_target_location()
         obs=[]
         for xx in x:
-            p_T = self.obs_fun(xx,True,c,**self.obs_kwargs)
+            p_T = self.obs_fun(xx,True,c)
             zz = np.random.uniform()<p_T
             obs.append((xx,zz))
         return obs     
@@ -200,7 +207,8 @@ class Vehicle(object):
         
     def update_obs(self, h, obs):
         if obs != []:
-            h.set_data(*zip(*obs))  
+            h.set_data([o[0] for o in obs], [o[1] for o in obs])
+            # h.set_data(*zip(*obs))
                   
     def add_observations(self, obs, *args, **kwargs):
         self.belief.add_observations(obs, *args, **kwargs)
@@ -212,144 +220,13 @@ class Vehicle(object):
         self.belief.reset_observations()
 
 
-class GraphVehicle(Vehicle):
-
-    def get_pose(self, v_id):
-        return self.motion_model.G.get_location(v_id)
-
-    def kld_tree(self, vertex_tuple=None, depth=3):
-        if vertex_tuple is None:
-            vertex_tuple = (self.get_current_state(),)
-        elif len(vertex_tuple) >= depth+1:
-            return {vertex_tuple: self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, vertex_tuple)}
-
-        k_tree = {}
-
-        for v_id in self.motion_model.G.V[vertex_tuple].neighbours:
-            if v_id is not vertex_tuple[-1]:
-                k_tree.update(self.kld_tree(vertex_tuple+v_id, depth))
-
-        return k_tree
-
-    def kld_select_obs(self, depth):
-        max_util = None
-        paths = self.kld_tree(depth)
-        for path, path_util in paths:
-            if path_util > max_util:
-                best_path = path
-                max_util = path_util
-
-        self.leaf_states = self.motion_model.get_leaf_states(self.get_current_state(), depth)
-        self.next_states = self.motion_model.get_leaf_states(self.get_current_state(), 1)
-
-        self.leaf_values = np.array(self.kld_tree(depth))
-        path_max = np.unravel_index(np.argmax(self.leaf_values),
-                                    self.motion_model.get_paths_number() * np.ones(depth, dtype='int'))
-        amax = path_max[0]
-
-        self.prune_likelihood_tree(amax, depth)
-        self.full_path = np.append(self.full_path, self.motion_model.get_trajectory(self.get_current_pose(), amax),
-                                   axis=0)
-
-        self.set_current_state(self.next_states[amax])
-
-        cobs = self.generate_observations([self.get_current_pose()[0:2]])
-        self.add_observations(cobs)
-
-        return amax
-
-    def prune_likelihood_tree(self, selected_option, depth):
-        self.likelihood_tree.children[selected_option].add_children(depth)
-        self.likelihood_tree = self.likelihood_tree.children[selected_option]
-
-    def setup_plot(self, h_ax, tree_depth=None, obs_symbols=['r^', 'go'], ms_start=8, ms_target=10, ms_scatter=20,
-                   ms_obs=6.5):
-        self._plots = True
-        h_ax.clear()
-        self.h_ax = h_ax
-        self.h_artists = {}
-        self.h_artists['pc'] = self.h_ax.imshow(np.zeros(self.world.get_size()), origin='lower', vmin=0, animated=True)
-        self.h_artists['cpos'], = self.h_ax.plot([], [], 'o', color='gold', fillstyle='full', ms=ms_start, mew=0)
-        target_pos = self.world.get_target_location()
-        self.h_artists['target'], = self.h_ax.plot(target_pos[0], target_pos[1], 'wx', mew=2, ms=ms_target)
-        self.h_artists['start'], = self.h_ax.plot(self.start_pose[0], self.start_pose[1], '^', color='orange',
-                                                  ms=ms_start, fillstyle='full')
-        self.h_artists['obsF'], = self.h_ax.plot([], [], obs_symbols[0], mew=0.5, mec='w', ms=ms_obs)
-        self.h_artists['obsT'], = self.h_ax.plot([], [], obs_symbols[1], mew=0.5, mec='w', ms=ms_obs)
-        self.h_artists['path'], = self.h_ax.plot([], [], 'w-', lw=2)
-        self.h_ax.set_xlim(-.5, self.world.get_size()[0] - 0.5)
-        self.h_ax.set_ylim(-.5, self.world.get_size()[1] - 0.5)
-        if tree_depth is not None:
-            self.leaf_poses = self.motion_model.get_leaf_poses(self.start_pose, depth=tree_depth)
-            self.h_artists['tree'] = self.h_ax.scatter(self.leaf_poses[:, 0], self.leaf_poses[:, 1], ms_scatter)
-
-        if self.unshared:
-            self.h_artists['shared_obsF'], = self.h_ax.plot([], [], '^', color='darksalmon', mec='w', mew=0,
-                                                            ms=ms_obs - 1.5)
-            self.h_artists['shared_obsT'], = self.h_ax.plot([], [], 'o', color='darkseagreen', mec='w', mew=0,
-                                                            ms=ms_obs - 1.5)
-
-    def update_plot(self):
-        cpos = self.get_current_pose()
-        self.h_artists['cpos'].set_data(cpos[0], cpos[1])
-
-        if self.belief.update_pc_map:
-            pc = self.belief.persistent_centre_probability_map()
-            pc = pc / pc.sum()
-            self.h_artists['pc'].set_data(pc.transpose())
-            self.h_artists['pc'].set_clim([0, pc.max()])
-
-        obsT = [xx for xx, zz in self.belief.get_observations() if zz == True]
-        obsF = [xx for xx, zz in self.belief.get_observations() if zz == False]
-        self.update_obs(self.h_artists['obsT'], obsT)
-        self.update_obs(self.h_artists['obsF'], obsF)
-
-        self.h_artists['path'].set_data(self.full_path[:, 0], self.full_path[:, 1])
-
-        try:
-            self.h_artists['tree'].set_offsets(self.leaf_poses[:, 0:2])
-            self.h_artists['tree'].set_array(self.leaf_values - self.leaf_values.min())
-        except (KeyError, AttributeError):
-            pass
-
-            # return self.h_artists.values()
-
-    def get_artists(self):
-        # This is because stupid animate doesn't repsect plot order, so I can't just return h_artsists.values()
-        if self.unshared:
-            return (self.h_artists['pc'], self.h_artists['cpos'], self.h_artists['target'],
-                    self.h_artists['start'], self.h_artists['obsT'], self.h_artists['obsF'],
-                    self.h_artists['path'], self.h_artists['tree'],
-                    self.h_artists['shared_obsT'], self.h_artists['shared_obsF'])
-        else:
-            return (self.h_artists['pc'], self.h_artists['cpos'], self.h_artists['target'],
-                    self.h_artists['start'], self.h_artists['obsT'], self.h_artists['obsF'],
-                    self.h_artists['path'], self.h_artists['tree'])
-
-    def update_obs(self, h, obs):
-        if obs != []:
-            h.set_data(*zip(*obs))
-
-    def add_observations(self, obs, *args, **kwargs):
-        self.belief.add_observations(obs, *args, **kwargs)
-
-    def get_observations(self):
-        return self.belief.get_observations()
-
-    def reset_observations(self):
-        self.belief.reset_observations()
-
-
-
-
 class Belief(object):
-    def __init__(self, world_model, p_z_given_x, p_z_given_x_kwargs = {}):
+    def __init__(self, world_model, p_z_given_x):
         self.nx, self.ny = world_model.get_size()
         self.x = np.arange(self.nx)
         self.y = np.arange(self.ny)
         self.p_uniform = 1.0/(self.nx*self.ny)
         self.p_z_given_x = p_z_given_x
-        self.p_z_given_x_kwargs = p_z_given_x_kwargs
         self.p_c = self.uniform_prior
         self.reset_observations()
         self.update_pc_map = False
@@ -407,7 +284,7 @@ class Belief(object):
         if obs is None:
             obs=self.observations
         for xx,zz in obs:
-            p_evidence *= self.p_z_given_x(xx,zz,c=c,**self.p_z_given_x_kwargs)
+            p_evidence *= self.p_z_given_x(xx,zz,c=c)
         return p_evidence
     
     def p_c_given_I(self,c,pc=None,pI=None):
@@ -419,7 +296,7 @@ class Belief(object):
         return pIgc*pc/pI
     
     def pzgc_samples(self,x,z):
-        return np.array([self.p_z_given_x(x,z,c=xc,**self.p_z_given_x_kwargs) for xc in self.csamples])
+        return np.array([self.p_z_given_x(x,z,c=xc) for xc in self.csamples])
                 
     def mc_p_z_given_I(self,x,z,xs=None,pzgc=None):
         if xs is None:
@@ -429,7 +306,7 @@ class Belief(object):
             pIgc = np.array([self.p_I_given_c(xc) for xc in xs])
         
         if pzgc is None:
-            pzgc = np.array([self.p_z_given_x(x,z,c=xc,**self.p_z_given_x_kwargs) for xc in xs])
+            pzgc = np.array([self.p_z_given_x(x,z,c=xc) for xc in xs])
         
         pz_accumulator = np.multiply(pIgc,pzgc).sum()
         # pI = pI_accumulator/xs.shape[0], and likewise for the pz_accumlator,
@@ -558,9 +435,9 @@ class LikelihoodTreeNode(object):
         self.motion_model = motion_model
         self.children = None
         self.likelihood_function = likelihood_function
-        Flike = self.likelihood_function(self.state[0:2], False)    # Likelihood of observing False at this location across all possible centre locations (MC sampled)
-        self.likelihood = [Flike,1.0-Flike]                         # Full likelihood ([0] False, [1] True)
-        self.add_children(inverse_depth)                            # Go down the tree another layer
+        Flike = self.likelihood_function(self.state, False) # p(z=F|x) across all possible centre locations (MC sampled)
+        self.likelihood = [Flike,1.0-Flike]                 # Full likelihood ([0] False, [1] True)
+        self.add_children(inverse_depth)                    # Go down the tree another layer
         self.node_colours = ['firebrick', 'green', 'cornflowerblue', 'orange', 'mediumorchid', 'lightseagreen']
         
     def add_children(self, inverse_depth):
@@ -644,5 +521,5 @@ class LikelihoodTreeNode(object):
 #for obx,obz in obs:
 #            # For each added observation, update p(I|c) for the c samples
 #            for ii,xc in enumerate(self.csamples):
-#                self.pIgc[ii] = self.pIgc[ii]*self.p_z_given_x(obx,obz,c=xc,**self.p_z_given_x_kwargs)
+#                self.pIgc[ii] = self.pIgc[ii]*self.p_z_given_x(obx,obz,c=xc)
 #        
