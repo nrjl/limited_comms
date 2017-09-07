@@ -25,7 +25,7 @@ kld_depth = 2
 target_range = np.sqrt((field_size[0]*field_size[1]/100.0)/np.pi)
 
 # Observation model
-obs_model = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
+sensor = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
 
 # Start state (location and heading rad)
 start_pose = np.array([18.0, 23.0, np.pi/2])
@@ -38,7 +38,7 @@ obs_symbols = ['r^','go']
 
 # Plot sensor curve
 fobs,axobs = plt.subplots()
-obs_model.plot(axobs)
+sensor.plot(axobs)
 fobs.show()
 
 # World model
@@ -46,7 +46,7 @@ world = belief_state.World(*field_size, target_location=target_centre)
 
 # Setup vehicles
 glider_motion = motion_models.yaw_rate_motion(max_yaw=np.pi/2.0, speed=4.0, n_yaws=5, n_points=21)
-vehicle = belief_state.Vehicle(world, glider_motion, obs_model.likelihood, start_state=start_pose)
+vehicle = belief_state.Vehicle(world, glider_motion, sensor, start_state=start_pose)
 
 p_range = belief_state.TargetFinder(target_centre, vehicle.belief, target_range)
 

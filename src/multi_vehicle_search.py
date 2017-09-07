@@ -21,7 +21,7 @@ target_radius = 15.0
 kld_depth = 2
 
 # Observation model
-obs_model = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
+sensor = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
 # obs_model = sensor_models.DiscreteStep(r=target_radius, true_pos=0.9, true_neg=0.9)
 
 # Start state (location and heading rad)
@@ -47,7 +47,7 @@ current_wait = share_wait+1
 
 # Plot sensor curve
 fobs,axobs = plt.subplots()
-obs_model.plot(axobs)
+sensor.plot(axobs)
 fobs.show()
 
 # World model
@@ -55,7 +55,7 @@ world = belief_state.World(*field_size, target_location=target_centre)
 
 # Setup vehicles
 glider_motion = yaw_rate_motion(max_yaw=np.pi, speed=4.0, n_yaws=6, n_points=21)
-vehicles = [belief_state.Vehicle(world, glider_motion, obs_model.likelihood, start_pose, unshared=True) for start_pose in start_poses]
+vehicles = [belief_state.Vehicle(world, glider_motion, sensor, start_pose, unshared=True) for start_pose in start_poses]
 
 def dkl_map(vb):
     pcgI = vb.persistent_centre_probability_map()
@@ -121,8 +121,8 @@ def animate(i):
         Fobs = [xx for xx,zz in vehicles[0].belief.get_observations() if zz==False]
         Tobs = [xx for xx,zz in vehicles[0].belief.get_observations() if zz==True]
         for vehicle in vehicles:
-            vehicle.h_artists['shared_obsF'].set_data(*zip(*Fobs))
-            vehicle.h_artists['shared_obsT'].set_data(*zip(*Tobs))
+            vehicle.h_artists['shared_obsF'].set_data([o[0] for o in Fobs], [o[1] for o in Fobs])
+            vehicle.h_artists['shared_obsT'].set_data([o[0] for o in Tobs], [o[1] for o in Tobs])
         current_wait += 1
     elif current_wait < share_wait:
         current_wait += 1

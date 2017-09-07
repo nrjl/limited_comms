@@ -232,13 +232,16 @@ class GraphVehicle(belief_state.Vehicle):
 
     def reset_mc_likelihood(self):
         self.mc_likelihood = {}
-
+        ns = self.sensor.get_n_returns()
         for vtx in self.motion_model.get_graph().get_vertices():
-            p_F_given_x = np.array([self.obs_fun(vtx.get_location(), False, c=xc) for xc in self.belief.csamples])
-            self.mc_likelihood[vtx.get_id()] = np.vstack((p_F_given_x, 1.0 - p_F_given_x))
+            p_z_given_x = np.ones((ns, len(self.belief.csamples)), dtype='float')
+            for z in range(ns-1):
+                p_z_given_x[z] = [self.sensor.likelihood(vtx.get_location(), z, c=xc) for xc in self.belief.csamples]
+                p_z_given_x[ns-1] -= p_z_given_x[z]     # Last row is 1.0-sum(p(z|x) forall z != ns
+            self.mc_likelihood[vtx.get_id()] = p_z_given_x
 
-    def get_mc_likelihood(self, v_id, z):
-            return self.mc_likelihood[v_id][z]
+    def get_mc_likelihood(self, v_id):
+            return self.mc_likelihood[v_id]
 
     def get_pose(self, v_id):
         return self.motion_model.G.get_vertex(v_id).get_location()
@@ -409,5 +412,5 @@ class GraphMotion:
         return self.G.acyclic_paths_to_depth((start_id,), goal_id, max_cost = cost)
 
     def get_trajectory(self, u_id, v_id):
-        poses = self.G.V[u_id].location + (self.G.V[v_id].location - self.G.V[v_id].location)*self.t
-        return poses
+            #self.G.V[u_id].location + (self.G.V[v_id].location - self.G.V[v_id].location)*self.t
+        return self.get_pose(v_id)

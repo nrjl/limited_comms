@@ -41,19 +41,19 @@ class Vehicle(object):
     # This class defines an exploring vehicle that makes observations and maintains a belief over a target location by
     # selecting actions that maximise the KLD over the target belief
 
-    def __init__(self, world, motion_model, obs_fun, start_state=0, unshared=False, *args, **kwargs):
+    def __init__(self, world, motion_model, sensor_model, start_state=0, unshared=False, *args, **kwargs):
         self.world = world
         self.motion_model = motion_model
-        self.obs_fun = obs_fun
+        self.sensor = sensor_model
         self.start_state = start_state
         self.set_current_state(start_state)
         self.full_path = np.array([self.get_current_pose()])
         self.set_motion_model(motion_model)
         self.unshared = unshared
         if not unshared:
-            self.belief = Belief(self.world, self.obs_fun)
+            self.belief = Belief(self.world, self.sensor)
         else:
-            self.belief = BeliefUnshared(self.world, self.obs_fun)
+            self.belief = BeliefUnshared(self.world, self.sensor)
         self._plots = False
         self._init_extras(*args, **kwargs)
 
@@ -96,19 +96,14 @@ class Vehicle(object):
         # Generate observations at an array of locations
         if c is None:
             c = self.world.get_target_location()
-        obs=[]
-        for xx in x:
-            p_T = self.obs_fun(xx,True,c)
-            zz = np.random.uniform()<p_T
-            obs.append((xx,zz))
-        return obs     
+        return self.sensor.generate_observations(x, c)
 
     def build_likelihood_tree(self,depth=3):
         # A likelihood tree stores the likelihood of observations over a tree of actions
         self.likelihood_tree = LikelihoodTreeNode(
             self.get_current_state(),
             self.motion_model, 
-            self.belief.pzgc_samples, 
+            self.belief.pzgc_full,
             inverse_depth=depth)
             
     def kld_tree(self, depth=3):
@@ -135,7 +130,7 @@ class Vehicle(object):
         
         self.set_current_state(self.next_states[amax])
         
-        cobs = self.generate_observations([self.get_current_pose()[0:2]])
+        cobs = self.generate_observations([self.get_current_pose()])
         self.add_observations(cobs)
         
         return amax
@@ -178,8 +173,8 @@ class Vehicle(object):
             self.h_artists['pc'].set_data(pc.transpose())
             self.h_artists['pc'].set_clim([0,pc.max()])
         
-        obsT = [xx for xx,zz in self.belief.get_observations() if zz==True]
-        obsF = [xx for xx,zz in self.belief.get_observations() if zz==False]
+        obsT = [xx for xx,zz in self.belief.get_observations() if zz==1]
+        obsF = [xx for xx,zz in self.belief.get_observations() if zz==0]
         self.update_obs(self.h_artists['obsT'], obsT)
         self.update_obs(self.h_artists['obsF'], obsF)
         
@@ -221,12 +216,12 @@ class Vehicle(object):
 
 
 class Belief(object):
-    def __init__(self, world_model, p_z_given_x):
+    def __init__(self, world_model, sensor_model):
         self.nx, self.ny = world_model.get_size()
         self.x = np.arange(self.nx)
         self.y = np.arange(self.ny)
         self.p_uniform = 1.0/(self.nx*self.ny)
-        self.p_z_given_x = p_z_given_x
+        self.sensor = sensor_model
         self.p_c = self.uniform_prior
         self.reset_observations()
         self.update_pc_map = False
@@ -284,7 +279,7 @@ class Belief(object):
         if obs is None:
             obs=self.observations
         for xx,zz in obs:
-            p_evidence *= self.p_z_given_x(xx,zz,c=c)
+            p_evidence *= self.sensor.likelihood(xx,zz,c=c)
         return p_evidence
     
     def p_c_given_I(self,c,pc=None,pI=None):
@@ -296,8 +291,16 @@ class Belief(object):
         return pIgc*pc/pI
     
     def pzgc_samples(self,x,z):
-        return np.array([self.p_z_given_x(x,z,c=xc) for xc in self.csamples])
-                
+        return np.array([self.sensor.likelihood(x, z, c=xc) for xc in self.csamples])
+
+    def pzgc_full(self, x):
+        ns = self.sensor.get_n_returns()
+        p_zgx = np.ones((ns, len(self.csamples)), dtype='float')
+        for z in range(ns - 1):
+            p_zgx[z] = self.pzgc_samples(x, z)
+            p_zgx[ns - 1] -= p_zgx[z]  # Last row is 1.0-sum(p(z|x) forall z != ns
+        return p_zgx
+
     def mc_p_z_given_I(self,x,z,xs=None,pzgc=None):
         if xs is None:
             xs = self.csamples
@@ -306,7 +309,7 @@ class Belief(object):
             pIgc = np.array([self.p_I_given_c(xc) for xc in xs])
         
         if pzgc is None:
-            pzgc = np.array([self.p_z_given_x(x,z,c=xc) for xc in xs])
+            pzgc = np.array([self.sensor.likelihood(x,z,c=xc) for xc in xs])
         
         pz_accumulator = np.multiply(pIgc,pzgc).sum()
         # pI = pI_accumulator/xs.shape[0], and likewise for the pz_accumlator,
@@ -316,8 +319,8 @@ class Belief(object):
     def kld_utility(self,x):
         # Ignoring p(I)
         pc = self.p_c(0) # Only for uniform
-        pzgc_a = self.pzgc_samples(x,True)
-        pzgI = self.mc_p_z_given_I(x,True,pzgc=pzgc_a)
+        pzgc_a = self.pzgc_samples(x, 1)
+        pzgI = self.mc_p_z_given_I(x, 1, pzgc=pzgc_a)
         
         VT_accumulator = 0.0
         VF_accumulator = 0.0
@@ -366,7 +369,7 @@ class Belief(object):
         pz = np.zeros((self.nx,self.ny))
         for ii,xx in enumerate(self.x):
             for jj,yy in enumerate(self.y):
-                pz[ii,jj] = self.mc_p_z_given_I([xx,yy],True)
+                pz[ii,jj] = self.mc_p_z_given_I([xx,yy], 1)
         return pz    
     
     def utility_map(self,mcn=1000):
@@ -435,8 +438,7 @@ class LikelihoodTreeNode(object):
         self.motion_model = motion_model
         self.children = None
         self.likelihood_function = likelihood_function
-        Flike = self.likelihood_function(self.state, False) # p(z=F|x) across all possible centre locations (MC sampled)
-        self.likelihood = [Flike,1.0-Flike]                 # Full likelihood ([0] False, [1] True)
+        self.likelihood = self.likelihood_function(self.state)                 # Full likelihood ([0] False, [1] True)
         self.add_children(inverse_depth)                    # Go down the tree another layer
         self.node_colours = ['firebrick', 'green', 'cornflowerblue', 'orange', 'mediumorchid', 'lightseagreen']
         
@@ -523,3 +525,14 @@ class LikelihoodTreeNode(object):
 #            for ii,xc in enumerate(self.csamples):
 #                self.pIgc[ii] = self.pIgc[ii]*self.p_z_given_x(obx,obz,c=xc)
 #        
+
+# def generate_observations(self, x, c=None):
+#     # Generate observations at an array of locations
+#     if c is None:
+#         c = self.world.get_target_location()
+#     obs=[]
+#     for xx in x:
+#         p_T = self.sensor.likelihood(xx, 1, c)
+#         zz = np.random.uniform() < p_T
+#         obs.append((xx,zz))
+#     return obs
