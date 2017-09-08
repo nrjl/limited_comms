@@ -158,6 +158,8 @@ class Vehicle(object):
         if tree_depth is not None:
             self.leaf_states = self.motion_model.get_leaf_states(self.get_start_state(),depth=tree_depth)
             self.h_artists['tree'] = self.h_ax.scatter(self.leaf_states[:,0],self.leaf_states[:,1],ms_scatter)
+        else:
+            self.h_artists['tree'], = self.h_ax.plot([],[])
             
         if self.unshared:
             self.h_artists['shared_obsF'], = self.h_ax.plot([],[],'^',color='darksalmon',mec='w',mew=0,ms=ms_obs-1.5)
@@ -189,7 +191,7 @@ class Vehicle(object):
         #return self.h_artists.values()
             
     def get_artists(self):
-        # This is because stupid animate doesn't repsect plot order, so I can't just return h_artsists.values()
+        # This is because stupid animate doesn't respect plot order, so I can't just return h_artsists.values()
         if self.unshared:
             return (self.h_artists['pc'],self.h_artists['cpos'],self.h_artists['target'],
                 self.h_artists['start'],self.h_artists['obsT'],self.h_artists['obsF'],
@@ -466,12 +468,15 @@ class LikelihoodTreeNode(object):
         return self.likelihood[index]
         
     def plot_tree(self, ax,colour_index=0):
-        x0,y0 = self.state[0:2]
+        x0,y0 = self.motion_model.get_pose(self.state)[0:2]
         ax.plot(x0,y0,'o',color=self.node_colours[colour_index%len(self.node_colours)])
         if self.children is not None:
             for ii,child in enumerate(self.children):
                 child.plot_tree(ax,colour_index+1)
-                tt = self.motion_model.get_trajectory(self.state,ii)
+                if isinstance(child.state, int):
+                    tt = self.motion_model.get_trajectory(self.state, child.state)
+                else:
+                    tt = self.motion_model.get_trajectory(self.state, ii)
                 ax.plot(tt[:,0],tt[:,1],'--',color='grey')
                 
     def kld_path_utility(self, kld_function, decision_list, current_depth=0, curr_pzgc=[]):

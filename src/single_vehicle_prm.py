@@ -27,13 +27,15 @@ target_radius = 15.0
 kld_depth = 2
 
 # PRM graph
-prm_nodes = 10
+prm_nodes = 7
 roadmap = prm.PRM([[0.0,field_size[0]],[0,field_size[1]]], prm_nodes, type='kPRM*')
 print roadmap
 print roadmap.G
-# fh, ah = plt.subplots()
-# roadmap.plot_PRM(ah, label_nodes=True)
-# fh.show()
+fh, ah = plt.subplots()
+roadmap.plot_PRM(ah, label_nodes=True)
+fh.show()
+# gg = roadmap.G.no_edge_revisit_paths((0,), max_budget=200.0)
+# print len(gg)
 # print roadmap.G.acyclic_paths_to_depth((0,), 2)
 # print roadmap.G.acyclic_paths_to_goal((0,), 1, max_cost=100.0)
 
@@ -41,7 +43,7 @@ print roadmap.G
 target_range = np.sqrt((field_size[0] * field_size[1] / 100.0) / np.pi)
 
 # Observation model
-obs_model = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
+sensor = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
 
 # Start state
 start_state = random.choice(roadmap.G.V.keys())
@@ -54,7 +56,7 @@ obs_symbols = ['r^', 'go']
 
 # Plot sensor curve
 fobs,axobs = plt.subplots()
-obs_model.plot(axobs)
+sensor.plot(axobs)
 fobs.show()
 
 # World model
@@ -62,7 +64,7 @@ world = belief_state.World(*field_size, target_location=target_centre)
 
 # Setup vehicles
 vehicle_motion = prm.GraphMotion(roadmap.G)
-vehicle = prm.GraphVehicle(world, vehicle_motion, obs_model.likelihood, start_state)
+vehicle = prm.GraphVehicle(world, vehicle_motion, sensor, start_state)
 
 p_range = belief_state.TargetFinder(target_centre, vehicle.belief, target_range)
 
@@ -92,7 +94,7 @@ def init():
     # Generate persistent probability map
     vehicle.belief.persistent_centre_probability_map()
 
-    vehicle.setup_plot(h_ax, tree_depth=kld_depth)
+    vehicle.setup_plot(h_ax)
     vehicle.update_plot()
     return vehicle.get_artists()
 

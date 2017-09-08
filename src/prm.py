@@ -85,6 +85,30 @@ class Graph(object):
         else:
             return {}
 
+    def no_edge_revisit_paths(self, current_path, current_budget=0.0, max_budget=()):
+        # Find all paths (within budget) that traverse each (directed) once at most
+        paths = []
+        cV = self.V[current_path[-1]]
+        budget_exceeded = True
+        for v_id in cV.neighbours:
+            new_edge = (cV.get_id(), v_id)
+            if not edge_in_path(current_path, new_edge):
+                ncost = float(current_budget + cV.neighbours[v_id])
+                if ncost < max_budget:
+                    budget_exceeded = False
+                    paths.extend(self.no_edge_revisit_paths(current_path+(v_id,), ncost, max_budget))
+        if budget_exceeded or len(paths) == 0:
+            paths.append(current_path)
+            # print "Path found: ", current_path
+        return paths
+
+
+def edge_in_path(path, edge):
+    if len(path) >= 2:
+        for i in range(len(path)-2):
+            if edge[0] == path[i] and edge[1] == path[i+1]:
+                return True
+    return False
 
 class Vertex(object):
     def __init__(self, id, location):
@@ -254,46 +278,47 @@ class GraphVehicle(belief_state.Vehicle):
             self.get_mc_likelihood,
             inverse_depth=depth)
 
-    # def kld_tree(self, vertex_tuple=None, depth=3):
-    #     if vertex_tuple is None:
-    #         vertex_tuple = (self.get_current_state(),)
-    #     elif len(vertex_tuple) >= depth+1:
-    #         return {vertex_tuple: self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, vertex_tuple)}
-    #
-    #     k_tree = {}
-    #
-    #     for v_id in self.motion_model.G.V[vertex_tuple].neighbours:
-    #         if v_id is not vertex_tuple[-1]:
-    #             k_tree.update(self.kld_tree(vertex_tuple+v_id, depth))
-    #
-    #     return k_tree
-    #
-    # def kld_select_obs(self, depth):
-    #     max_util = None
-    #     paths = self.kld_tree(depth)
-    #     for path, path_util in paths:
-    #         if path_util > max_util:
-    #             best_path = path
-    #             max_util = path_util
-    #
-    #     self.leaf_states = self.motion_model.get_leaf_states(self.get_current_state(), depth)
-    #     self.next_states = self.motion_model.get_leaf_states(self.get_current_state(), 1)
-    #
-    #     self.leaf_values = np.array(self.kld_tree(depth))
-    #     path_max = np.unravel_index(np.argmax(self.leaf_values),
-    #                                 self.motion_model.get_paths_number() * np.ones(depth, dtype='int'))
-    #     amax = path_max[0]
-    #
-    #     self.prune_likelihood_tree(amax, depth)
-    #     self.full_path = np.append(self.full_path, self.motion_model.get_trajectory(self.get_current_pose(), amax),
-    #                                axis=0)
-    #
-    #     self.set_current_state(self.next_states[amax])
-    #
-    #     cobs = self.generate_observations([self.get_current_pose()[0:2]])
-    #     self.add_observations(cobs)
-    #
-    #     return amax
+    def kld_tree(self, vertex_tuple=None, depth=3):
+        if vertex_tuple is None:
+            vertex_tuple = (self.get_current_state(),)
+        elif len(vertex_tuple) >= depth+1:
+            return {vertex_tuple: self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, vertex_tuple)}
+
+        k_tree = {}
+        c_state = vertex_tuple[-1]
+
+        for v_id in self.motion_model.G.V[c_state].neighbours:
+            if v_id is not c_state:
+                k_tree.update(self.kld_tree(vertex_tuple+v_id, depth))
+
+        return k_tree
+
+    def kld_select_obs(self, depth):
+        max_util = None
+        paths = self.kld_tree(depth=depth)
+        for path, path_util in paths:
+            if path_util > max_util:
+                best_path = path
+                max_util = path_util
+
+        self.leaf_states = self.motion_model.get_leaf_states(self.get_current_state(), depth)
+        self.next_states = self.motion_model.get_leaf_states(self.get_current_state(), 1)
+
+        self.leaf_values = np.array(self.kld_tree(depth))
+        path_max = np.unravel_index(np.argmax(self.leaf_values),
+                                    self.motion_model.get_paths_number() * np.ones(depth, dtype='int'))
+        amax = path_max[0]
+
+        self.prune_likelihood_tree(amax, depth)
+        self.full_path = np.append(self.full_path, self.motion_model.get_trajectory(self.get_current_pose(), amax),
+                                   axis=0)
+
+        self.set_current_state(self.next_states[amax])
+
+        cobs = self.generate_observations([self.get_current_pose()[0:2]])
+        self.add_observations(cobs)
+
+        return amax
     #
     # def prune_likelihood_tree(self, selected_option, depth):
     #     self.likelihood_tree.children[selected_option].add_children(depth)
@@ -413,4 +438,4 @@ class GraphMotion:
 
     def get_trajectory(self, u_id, v_id):
             #self.G.V[u_id].location + (self.G.V[v_id].location - self.G.V[v_id].location)*self.t
-        return self.get_pose(v_id)
+        return np.array([self.get_pose(u_id), self.get_pose(v_id)])
