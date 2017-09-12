@@ -23,7 +23,13 @@ class Graph(object):
         return iter(self.V.values())
 
     def __str__(self):
-        return "Graph with {0} nodes and {1} edges".format(len(self.V), len(self.E))
+        return "Graph with {0} nodes and {1} edges".format(self.get_number_vertices(), self.get_number_edges())
+
+    def get_number_vertices(self):
+        return len(self.V)
+
+    def get_number_edges(self):
+        return len(self.E)
 
     def print_vertices(self):
         for v in self.V.values():
@@ -86,7 +92,7 @@ class Graph(object):
             return {}
 
     def no_edge_revisit_paths(self, current_path, current_budget=0.0, max_budget=()):
-        # Find all paths (within budget) that traverse each (directed) once at most
+        # Find all paths (within budget) that traverse each (directed) edge once at most
         paths = []
         cV = self.V[current_path[-1]]
         budget_exceeded = True
@@ -221,29 +227,34 @@ class PRM(object):
         return w_min, w_max
 
     def plot_PRM(self, axh, label_nodes=False):
-        for v in self.G.get_vertices():
-            axh.plot(v.location[0], v.location[1], 'r.')
-            if label_nodes: axh.text(v.location[0], v.location[1], v.get_id())
+        v_locations = np.zeros((self.G.get_number_vertices(), 2))
+        for i, v in enumerate(self.G.get_vertices()):
+            v_locations[i] = v.get_location()
+            if label_nodes:  axh.text(v_locations[i,0], v_locations[i,1], v.get_id())
+
+        h_vertices = axh.plot(v_locations[:,0], v_locations[:,1], 'r.')
 
         w_min, w_max = self.get_edge_cost_bounds()
         cmap = cm.get_cmap()
         dw = w_max-w_min
-        if dw <= 0: dw=1.0
+        if dw <= 0:
+            dw = 1.0
 
         Edone = set()
+        h_lines = []
 
         for e_id, w in self.G.E.items():
             if e_id not in Edone and (e_id[1], e_id[0]) not in Edone:
                 ec = (w-w_min)/dw
                 x0, y0 = self.G.get_vertex(e_id[0]).location
                 x1, y1 = self.G.get_vertex(e_id[1]).location
-                axh.plot([x0, x1], [y0, y1], color=cmap(ec))
+                h_lines.extend(axh.plot([x0, x1], [y0, y1], color=cmap(ec)))
                 Edone.add(e_id)
 
         axh.set_xlim(self.limits[0])
         axh.set_ylim(self.limits[1])
         print "{0} vertices, {1} edges plotted".format(len(self.G.V), len(Edone))
-        return w_min, w_max
+        return h_vertices, h_lines
 
 
 class GraphVehicle(belief_state.Vehicle):
@@ -251,8 +262,10 @@ class GraphVehicle(belief_state.Vehicle):
     def _init_extras(self, *args, **kwargs):
         self.mc_likelihood = {}
 
-    def _reset_extras(self):
+    def _reset_extras(self, xs=None):
         self.mc_likelihood = {}
+        if xs is not None:
+            self.reset_mc_likelihood()
 
     def reset_mc_likelihood(self):
         self.mc_likelihood = {}
@@ -265,141 +278,71 @@ class GraphVehicle(belief_state.Vehicle):
             self.mc_likelihood[vtx.get_id()] = p_z_given_x
 
     def get_mc_likelihood(self, v_id):
-            return self.mc_likelihood[v_id]
+        # This returns the observation likelihood of all possible observations given a graph node (v_id) and Monte Carlo
+        # sampled
+        return self.mc_likelihood[v_id]
 
     def get_pose(self, v_id):
         return self.motion_model.G.get_vertex(v_id).get_location()
 
     def build_likelihood_tree(self,depth=3):
         # A likelihood tree stores the likelihood of observations over a tree of actions
-        self.likelihood_tree = belief_state.LikelihoodTreeNode(
+        self.likelihood_tree = GraphLikelihoodTreeNode(
             self.get_current_state(),
             self.motion_model,
             self.get_mc_likelihood,
             inverse_depth=depth)
 
-    def kld_tree(self, vertex_tuple=None, depth=3):
-        if vertex_tuple is None:
-            vertex_tuple = (self.get_current_state(),)
-        elif len(vertex_tuple) >= depth+1:
-            return {vertex_tuple: self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, vertex_tuple)}
+    def kld_tree(self, depth=3):
+        # This gets all the paths, and each path *includes* the current node as the 0th node in the path
+        all_paths = self.motion_model.get_tree_paths(self.get_current_state(), depth)
+        end_nodes = {}
+        self.k_tree = {}
+        max_util = None
 
-        k_tree = {}
-        c_state = vertex_tuple[-1]
+        for path in all_paths:
+            # kld_path_utility assumes you're working from the current node (not included in path)
+            v_kld = self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, path[1:])
+            if path[-1] not in end_nodes or end_nodes[path[-1]] < v_kld:
+                end_nodes[path[-1]] = v_kld
+                self.k_tree[path] = v_kld
+                if self.k_tree[path] > max_util:
+                    max_util = self.k_tree[path]
+                    best_path = path
 
-        for v_id in self.motion_model.G.V[c_state].neighbours:
-            if v_id is not c_state:
-                k_tree.update(self.kld_tree(vertex_tuple+v_id, depth))
-
-        return k_tree
+        return self.k_tree, best_path, max_util
 
     def kld_select_obs(self, depth):
-        max_util = None
-        paths = self.kld_tree(depth=depth)
-        for path, path_util in paths:
-            if path_util > max_util:
-                best_path = path
-                max_util = path_util
 
-        self.leaf_states = self.motion_model.get_leaf_states(self.get_current_state(), depth)
-        self.next_states = self.motion_model.get_leaf_states(self.get_current_state(), 1)
+        paths, best_path, max_util = self.kld_tree(depth=depth)
 
-        self.leaf_values = np.array(self.kld_tree(depth))
-        path_max = np.unravel_index(np.argmax(self.leaf_values),
-                                    self.motion_model.get_paths_number() * np.ones(depth, dtype='int'))
-        amax = path_max[0]
+        next_state = best_path[1]
+        self.prune_likelihood_tree(next_state, depth)
+        new_path = self.motion_model.get_trajectory(self.get_current_state(), next_state)
+        self.full_path = np.append(self.full_path, new_path, axis=0)
 
-        self.prune_likelihood_tree(amax, depth)
-        self.full_path = np.append(self.full_path, self.motion_model.get_trajectory(self.get_current_pose(), amax),
-                                   axis=0)
+        self.set_current_state(next_state)
 
-        self.set_current_state(self.next_states[amax])
-
-        cobs = self.generate_observations([self.get_current_pose()[0:2]])
+        cobs = self.generate_observations([self.get_current_pose()])
         self.add_observations(cobs)
 
-        return amax
-    #
-    # def prune_likelihood_tree(self, selected_option, depth):
-    #     self.likelihood_tree.children[selected_option].add_children(depth)
-    #     self.likelihood_tree = self.likelihood_tree.children[selected_option]
-    #
-    # def setup_plot(self, h_ax, tree_depth=None, obs_symbols=['r^', 'go'], ms_start=8, ms_target=10, ms_scatter=20,
-    #                ms_obs=6.5):
-    #     self._plots = True
-    #     h_ax.clear()
-    #     self.h_ax = h_ax
-    #     self.h_artists = {}
-    #     self.h_artists['pc'] = self.h_ax.imshow(np.zeros(self.world.get_size()), origin='lower', vmin=0, animated=True)
-    #     self.h_artists['cpos'], = self.h_ax.plot([], [], 'o', color='gold', fillstyle='full', ms=ms_start, mew=0)
-    #     target_pos = self.world.get_target_location()
-    #     self.h_artists['target'], = self.h_ax.plot(target_pos[0], target_pos[1], 'wx', mew=2, ms=ms_target)
-    #     self.h_artists['start'], = self.h_ax.plot(self.start_pose[0], self.start_pose[1], '^', color='orange',
-    #                                               ms=ms_start, fillstyle='full')
-    #     self.h_artists['obsF'], = self.h_ax.plot([], [], obs_symbols[0], mew=0.5, mec='w', ms=ms_obs)
-    #     self.h_artists['obsT'], = self.h_ax.plot([], [], obs_symbols[1], mew=0.5, mec='w', ms=ms_obs)
-    #     self.h_artists['path'], = self.h_ax.plot([], [], 'w-', lw=2)
-    #     self.h_ax.set_xlim(-.5, self.world.get_size()[0] - 0.5)
-    #     self.h_ax.set_ylim(-.5, self.world.get_size()[1] - 0.5)
-    #     if tree_depth is not None:
-    #         self.leaf_poses = self.motion_model.get_leaf_poses(self.start_pose, depth=tree_depth)
-    #         self.h_artists['tree'] = self.h_ax.scatter(self.leaf_poses[:, 0], self.leaf_poses[:, 1], ms_scatter)
-    #
-    #     if self.unshared:
-    #         self.h_artists['shared_obsF'], = self.h_ax.plot([], [], '^', color='darksalmon', mec='w', mew=0,
-    #                                                         ms=ms_obs - 1.5)
-    #         self.h_artists['shared_obsT'], = self.h_ax.plot([], [], 'o', color='darkseagreen', mec='w', mew=0,
-    #                                                         ms=ms_obs - 1.5)
-    #
-    # def update_plot(self):
-    #     cpos = self.get_current_pose()
-    #     self.h_artists['cpos'].set_data(cpos[0], cpos[1])
-    #
-    #     if self.belief.update_pc_map:
-    #         pc = self.belief.persistent_centre_probability_map()
-    #         pc = pc / pc.sum()
-    #         self.h_artists['pc'].set_data(pc.transpose())
-    #         self.h_artists['pc'].set_clim([0, pc.max()])
-    #
-    #     obsT = [xx for xx, zz in self.belief.get_observations() if zz == True]
-    #     obsF = [xx for xx, zz in self.belief.get_observations() if zz == False]
-    #     self.update_obs(self.h_artists['obsT'], obsT)
-    #     self.update_obs(self.h_artists['obsF'], obsF)
-    #
-    #     self.h_artists['path'].set_data(self.full_path[:, 0], self.full_path[:, 1])
-    #
-    #     try:
-    #         self.h_artists['tree'].set_offsets(self.leaf_poses[:, 0:2])
-    #         self.h_artists['tree'].set_array(self.leaf_values - self.leaf_values.min())
-    #     except (KeyError, AttributeError):
-    #         pass
-    #
-    #         # return self.h_artists.values()
-    #
-    # def get_artists(self):
-    #     # This is because stupid animate doesn't repsect plot order, so I can't just return h_artsists.values()
-    #     if self.unshared:
-    #         return (self.h_artists['pc'], self.h_artists['cpos'], self.h_artists['target'],
-    #                 self.h_artists['start'], self.h_artists['obsT'], self.h_artists['obsF'],
-    #                 self.h_artists['path'], self.h_artists['tree'],
-    #                 self.h_artists['shared_obsT'], self.h_artists['shared_obsF'])
-    #     else:
-    #         return (self.h_artists['pc'], self.h_artists['cpos'], self.h_artists['target'],
-    #                 self.h_artists['start'], self.h_artists['obsT'], self.h_artists['obsF'],
-    #                 self.h_artists['path'], self.h_artists['tree'])
-    #
-    # def update_obs(self, h, obs):
-    #     if obs != []:
-    #         h.set_data(*zip(*obs))
-    #
-    # def add_observations(self, obs, *args, **kwargs):
-    #     self.belief.add_observations(obs, *args, **kwargs)
-    #
-    # def get_observations(self):
-    #     return self.belief.get_observations()
-    #
-    # def reset_observations(self):
-    #     self.belief.reset_observations()
+        return next_state
+
+    def setup_tree_plot(self, tree_depth, ms_scatter):
+        return self.h_ax.scatter([], [], cmap=cm.jet)
+
+    def update_tree_plot(self):
+        try:
+            path_xy, ec = np.zeros((len(self.k_tree), 2)), np.zeros(len(self.k_tree))
+            for i, path in enumerate(self.k_tree):
+                path_xy[i] = self.get_pose(path[-1])
+                ec[i] = self.k_tree[path]
+
+            self.h_artists['tree'].set_offsets(path_xy)
+            self.h_artists['tree'].set_array(ec - ec.min())
+
+        except (KeyError, AttributeError):
+            pass
 
 
 class GraphMotion:
@@ -421,21 +364,55 @@ class GraphMotion:
     def get_end_states(self, v_id):
         return self.G.V[v_id].neighbours.keys()
 
-    def get_leaf_states(self, v_id, depth=1):
+    def get_tree_paths(self, v_id, depth=1):
         return self.G.acyclic_paths_to_depth((v_id,), depth)
-        # op = self.get_end_states(v_id)
-        # if depth > 1:
-        #     rp = []
-        #     op = self.get_end_states(v_id)
-        #     for state in op:
-        #         rp.extend(self.get_leaf_states(state, depth - 1))
-        # else:
-        #     rp = op
-        # return rp
 
     def get_paths_to_goal(self, start_id, goal_id, cost):
-        return self.G.acyclic_paths_to_depth((start_id,), goal_id, max_cost = cost)
+        return self.G.acyclic_paths_to_goal((start_id,), goal_id, max_cost = cost)
 
     def get_trajectory(self, u_id, v_id):
             #self.G.V[u_id].location + (self.G.V[v_id].location - self.G.V[v_id].location)*self.t
         return np.array([self.get_pose(u_id), self.get_pose(v_id)])
+
+class GraphLikelihoodTreeNode(belief_state.LikelihoodTreeNode):
+    def add_children(self, inverse_depth):
+        self.inverse_depth = inverse_depth
+        if self.inverse_depth <= 0:
+            return
+        if self.children is None:
+            self.children={}
+            end_states = self.motion_model.get_end_states(self.state)
+            for end_state in end_states:
+                self.children[end_state] = GraphLikelihoodTreeNode(end_state,
+                self.motion_model,
+                self.likelihood_function,
+                inverse_depth - 1)
+        else:
+            for child in self.children.values():
+                child.add_children(inverse_depth - 1)
+
+    def plot_tree(self, ax, colour_index=0):
+        x0, y0 = self.motion_model.get_pose(self.state)[0:2]
+        ax.plot(x0, y0, 'o', color=self.node_colours[colour_index % len(self.node_colours)])
+        if self.children is not None:
+            for ii, child in enumerate(self.children):
+                child.plot_tree(ax, colour_index + 1)
+                tt = self.motion_model.get_trajectory(self.state, child.state)
+                ax.plot(tt[:, 0], tt[:, 1], '--', color='grey')
+
+
+                    ## SCRAP:
+    # def kld_tree(self, vertex_tuple=None, depth=3):
+    #     if vertex_tuple is None:
+    #         vertex_tuple = (self.get_current_state(),)
+    #     elif len(vertex_tuple) >= depth+1:
+    #         return {vertex_tuple: self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, vertex_tuple)}
+    #
+    #     k_tree = {}
+    #     c_state = vertex_tuple[-1]
+    #
+    #     for v_id in self.motion_model.G.V[c_state].neighbours:
+    #         if v_id is not c_state:
+    #             k_tree.update(self.kld_tree(vertex_tuple+v_id, depth))
+    #
+    #     return k_tree

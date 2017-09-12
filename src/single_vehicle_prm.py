@@ -4,10 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import sensor_models
-import motion_models
 import belief_state
 import random
-import copy
 import prm
 
 # plt.style.use('ggplot')
@@ -16,7 +14,7 @@ plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
 randseed = 1
 
 # Number of observations for simulation
-n_obs = 50
+n_obs = 100
 
 # Truth data
 field_size = (100, 100)
@@ -27,17 +25,15 @@ target_radius = 15.0
 kld_depth = 2
 
 # PRM graph
-prm_nodes = 7
-roadmap = prm.PRM([[0.0,field_size[0]],[0,field_size[1]]], prm_nodes, type='kPRM*')
+prm_nodes = 600
+roadmap = prm.PRM([[0.0, field_size[0]], [0, field_size[1]]], prm_nodes, type='kPRM*')
 print roadmap
 print roadmap.G
-fh, ah = plt.subplots()
-roadmap.plot_PRM(ah, label_nodes=True)
-fh.show()
-# gg = roadmap.G.no_edge_revisit_paths((0,), max_budget=200.0)
-# print len(gg)
-# print roadmap.G.acyclic_paths_to_depth((0,), 2)
-# print roadmap.G.acyclic_paths_to_goal((0,), 1, max_cost=100.0)
+if roadmap.G.get_number_edges() < 5000:
+    fh, ah = plt.subplots()
+    label_nodes = (prm_nodes <= 100)
+    roadmap.plot_PRM(ah, label_nodes=label_nodes)
+    fh.show()
 
 # Target range for target finder (50% probability mass in 1% of area near true target)
 target_range = np.sqrt((field_size[0] * field_size[1] / 100.0) / np.pi)
@@ -78,11 +74,9 @@ def init():
 
     # Generate MC samples
     vehicle.belief.uniform_prior_sampler(mcsamples, set_samples=True)
-    vehicle.reset_mc_likelihood()
 
     # Generate observations
-    obs = vehicle.generate_observations([vehicle.get_current_pose()])
-    vehicle.add_observations(obs)
+    vehicle.generate_observations([vehicle.get_current_pose()], set_obs=True)
     vehicle.belief.update_pc_map = False
 
     # Build KLD likelihood tree
@@ -94,7 +88,7 @@ def init():
     # Generate persistent probability map
     vehicle.belief.persistent_centre_probability_map()
 
-    vehicle.setup_plot(h_ax)
+    vehicle.setup_plot(h_ax, tree_depth=kld_depth)
     vehicle.update_plot()
     return vehicle.get_artists()
 

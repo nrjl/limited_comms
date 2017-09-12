@@ -60,15 +60,17 @@ class Vehicle(object):
     def _init_extras(self, *args, **kwargs):
         pass
 
-    def reset(self, new_start_state=None):
+    def reset(self, new_start_state=None, xs=None):
         if new_start_state is not None:
             self.start_state = new_start_state
         self.set_current_state(self.start_state)
         self.full_path = np.array([self.get_current_pose()])
         self.reset_observations()
-        self._reset_extras()
+        if xs is not None:
+            self.belief.assign_prior_sample_set(xs)
+        self._reset_extras(xs)
 
-    def _reset_extras(self):
+    def _reset_extras(self, *args, **kwargs):
         pass
         
     def set_start_state(self, state):
@@ -92,11 +94,14 @@ class Vehicle(object):
     def set_motion_model(self,motion_model):
         self.motion_model = motion_model
         
-    def generate_observations(self, x, c=None):
+    def generate_observations(self, x, c=None, set_obs=False):
         # Generate observations at an array of locations
         if c is None:
             c = self.world.get_target_location()
-        return self.sensor.generate_observations(x, c)
+        obs = self.sensor.generate_observations(x, c)
+        if set_obs:
+            self.add_observations(obs)
+        return obs
 
     def build_likelihood_tree(self,depth=3):
         # A likelihood tree stores the likelihood of observations over a tree of actions
@@ -156,8 +161,7 @@ class Vehicle(object):
         self.h_ax.set_xlim(-.5, self.world.get_size()[0]-0.5)
         self.h_ax.set_ylim(-.5, self.world.get_size()[1]-0.5)
         if tree_depth is not None:
-            self.leaf_states = self.motion_model.get_leaf_states(self.get_start_state(),depth=tree_depth)
-            self.h_artists['tree'] = self.h_ax.scatter(self.leaf_states[:,0],self.leaf_states[:,1],ms_scatter)
+            self.h_artists['tree'] = self.setup_tree_plot(tree_depth, ms_scatter)
         else:
             self.h_artists['tree'], = self.h_ax.plot([],[])
             
@@ -181,15 +185,21 @@ class Vehicle(object):
         self.update_obs(self.h_artists['obsF'], obsF)
         
         self.h_artists['path'].set_data(self.full_path[:,0], self.full_path[:,1])
-        
+
+        self.update_tree_plot()
+        #return self.h_artists.values()
+
+    def setup_tree_plot(self, tree_depth, ms_scatter):
+        leaf_states = self.motion_model.get_leaf_states(self.get_start_state(), depth=tree_depth)
+        return self.h_ax.scatter(leaf_states[:, 0], leaf_states[:, 1], ms_scatter)
+
+    def update_tree_plot(self):
         try:
             self.h_artists['tree'].set_offsets(self.leaf_states[:,0:2])
             self.h_artists['tree'].set_array(self.leaf_values - self.leaf_values.min())
         except (KeyError, AttributeError):
             pass
-        
-        #return self.h_artists.values()
-            
+
     def get_artists(self):
         # This is because stupid animate doesn't respect plot order, so I can't just return h_artsists.values()
         if self.unshared:
@@ -217,6 +227,21 @@ class Vehicle(object):
         self.belief.reset_observations()
 
 
+def share_beliefs(vehicles, last_share):
+    vehicle_set = set(range(len(vehicles)))
+    nobs = len(vehicles[0].get_observations())
+    for ii in range(len(vehicles)):
+        other_vehicles = vehicle_set - {ii}
+        for jj in other_vehicles:
+            vehicles[ii].add_observations(vehicles[jj].get_observations()[last_share:nobs],
+                                          vehicles[jj].belief.unshared_pIgc, vehicles[jj].belief.unshared_pIgc_map)
+    for vehicle in vehicles:
+        vehicle.belief.reset_unshared()
+    last_share = len(vehicles[0].get_observations())
+
+    return last_share
+
+
 class Belief(object):
     def __init__(self, world_model, sensor_model):
         self.nx, self.ny = world_model.get_size()
@@ -225,6 +250,7 @@ class Belief(object):
         self.p_uniform = 1.0/(self.nx*self.ny)
         self.sensor = sensor_model
         self.p_c = self.uniform_prior
+        self.observations = []
         self.reset_observations()
         self.update_pc_map = False
         self.pI = 1.0
@@ -232,7 +258,7 @@ class Belief(object):
     def add_observations(self,obs):
         self.observations.extend(obs)
         # Update p(I|c) for the c samples with new observations
-        for ii,xc in enumerate(self.csamples):
+        for ii, xc in enumerate(self.csamples):
             self.pIgc[ii] *= self.p_I_given_c(c=xc,obs=obs)
             self.pI = self.mc_p_I()
                 
@@ -259,11 +285,11 @@ class Belief(object):
         self.csamples = xs
         self.pIgc = np.array([self.p_I_given_c(xc) for xc in xs])
             
-    def uniform_prior_sampler(self,n=1,set_samples=False):
-        xs = np.random.uniform(high=self.nx,size=(n,1))
-        ys = np.random.uniform(high=self.ny,size=(n,1))
-        samples = np.hstack((xs,ys))
-        if set_samples==True:
+    def uniform_prior_sampler(self, n=1, set_samples=False):
+        xs = np.random.uniform(high=self.nx, size=(n, 1))
+        ys = np.random.uniform(high=self.ny, size=(n, 1))
+        samples = np.hstack((xs, ys))
+        if set_samples:
             self.assign_prior_sample_set(samples)
         else:
             return samples
@@ -385,12 +411,17 @@ class Belief(object):
     def persistent_centre_probability_map(self):
         pI = self.pI    # self.mc_p_I()
         pc = self.p_c(0)
-        if self.update_pc_map == False:
+        if not self.update_pc_map:
             self.update_pc_map = True
             self.pIgc_map = self.centre_probability_map()*pI/pc
         return self.pIgc_map*pc/pI
-        
-        
+
+    def dkl_map(self):
+        pcgI = self.persistent_centre_probability_map()
+        dkl = pcgI * np.log(pcgI / self.p_c(0))
+        return dkl.sum() / pcgI.sum()
+
+
 class BeliefUnshared(Belief):
 
     def reset_unshared(self):
@@ -440,8 +471,8 @@ class LikelihoodTreeNode(object):
         self.motion_model = motion_model
         self.children = None
         self.likelihood_function = likelihood_function
-        self.likelihood = self.likelihood_function(self.state)                 # Full likelihood ([0] False, [1] True)
-        self.add_children(inverse_depth)                    # Go down the tree another layer
+        self.likelihood = self.likelihood_function(self.state) # Full likelihood, p(z|x,c) for all csamples ([0] False, [1] True)
+        self.add_children(inverse_depth)                       # Go down the tree another layer
         self.node_colours = ['firebrick', 'green', 'cornflowerblue', 'orange', 'mediumorchid', 'lightseagreen']
         
     def add_children(self, inverse_depth):
@@ -473,10 +504,7 @@ class LikelihoodTreeNode(object):
         if self.children is not None:
             for ii,child in enumerate(self.children):
                 child.plot_tree(ax,colour_index+1)
-                if isinstance(child.state, int):
-                    tt = self.motion_model.get_trajectory(self.state, child.state)
-                else:
-                    tt = self.motion_model.get_trajectory(self.state, ii)
+                tt = self.motion_model.get_trajectory(self.state,ii)
                 ax.plot(tt[:,0],tt[:,1],'--',color='grey')
                 
     def kld_path_utility(self, kld_function, decision_list, current_depth=0, curr_pzgc=[]):
@@ -508,7 +536,7 @@ class LikelihoodTreeNode(object):
                 #print "kld_fun called! kld_sum={0:0.3f}".format(kld_sum)
         return kld_sum
 
-     
+
 # This should be deprecated since it is the same as kld_select_obs with depth 1 
 #def select_observation(self):
 #    future_pose = self.motion_model.get_end_poses(self.get_current_pose())
