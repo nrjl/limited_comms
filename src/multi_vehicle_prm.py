@@ -41,7 +41,7 @@ delta_dkl = 0.1
 last_share = 0
 
 # How long to wait when there's a share frame
-share_wait = 5
+share_wait = 0
 current_wait = share_wait + 1
 
 # Plot sensor curve
@@ -71,6 +71,8 @@ def get_all_artists(vv):
         all_artists.extend(v.get_artists())
     return all_artists
 
+def arrange_meeting(prm, start_id, max_cost, n_robots):
+    path_groups = prm.pull_path_groups(start_id, max_cost, n_robots)
 
 def init():
     global curr_dkl, last_share
@@ -100,6 +102,8 @@ def init():
 
         vehicle.setup_plot(hv, tree_depth=kld_depth)
         vehicle.update_plot()
+
+    arrange_meeting(roadmap, start_state, max_cost=20.0, n_robots=n_vehicles)
 
     return get_all_artists(vehicles)
 

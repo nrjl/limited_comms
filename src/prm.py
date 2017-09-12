@@ -149,6 +149,7 @@ class PRM(object):
         self.d = self.limits.shape[0]
         self.n_points = n_points
         self.G = Graph()
+        self.distance_matrix = None
         self.build_PRM(**kwargs)
 
     def __str__(self):
@@ -211,14 +212,18 @@ class PRM(object):
         V = self.sample_nodes()
         self.G.add_vertices(V)
 
-        loc = np.array([v.location for v in V])
-        D = squareform(pdist(loc))              # Distance matrix
+        self.calc_distance_matrix()
 
-        for v_id, d in enumerate(D):
+        for v_id, d in enumerate(self.distance_matrix):
             for u_id, dd in enumerate(d):
                 if dd > 0 and dd < self.r:
                     self.G.add_edge(u_id, v_id, dd)
                     self.G.add_edge(v_id, u_id, dd)
+
+    def calc_distance_matrix(self):
+        # This might be dodgy - not guaranteed to pull vertices in order?
+        loc = np.array([self.G.V[v].location for v in range(self.G.get_number_vertices())])
+        self.distance_matrix = squareform(pdist(loc))              # Distance matrix
 
     def get_edge_cost_bounds(self):
         w_min, w_max = 0.0, 0.0
@@ -255,6 +260,43 @@ class PRM(object):
         axh.set_ylim(self.limits[1])
         print "{0} vertices, {1} edges plotted".format(len(self.G.V), len(Edone))
         return h_vertices, h_lines
+
+    def paths_to_cost(self, vertex_tuple, max_cost, ccost=0.0):
+        assert type(vertex_tuple) is tuple, "Input must be a tuple"
+
+        if ccost > max_cost:
+            return {}
+
+        else:
+            paths = {vertex_tuple:ccost}
+            for n in self.G.get_neighbours(vertex_tuple[-1]):
+                if n not in vertex_tuple:
+                    paths.update(self.paths_to_cost(vertex_tuple + (n,), max_cost,
+                                                       ccost+self.distance_matrix[vertex_tuple[-1],n]))
+            return paths
+
+    def pull_path_groups(self, start_vertex, max_cost, n_robots):
+        if self.distance_matrix is None:
+            self.calc_distance_matrix()
+        paths = self.paths_to_cost((start_vertex,), max_cost)
+
+        path_groups = {}
+        for path in paths:
+            if path[-1] not in path_groups:
+                path_groups[path[-1]] = {path:paths[path]}
+            else:
+                path_groups[path[-1]].update({path:paths[path]})
+
+        marked_for_deletion = []
+        for end_node in path_groups:
+            if len(path_groups[end_node]) < n_robots:
+                marked_for_deletion.append(end_node)
+
+        for node in marked_for_deletion:
+            del path_groups[node]
+
+        return path_groups
+
 
 
 class GraphVehicle(belief_state.Vehicle):
@@ -401,18 +443,3 @@ class GraphLikelihoodTreeNode(belief_state.LikelihoodTreeNode):
                 ax.plot(tt[:, 0], tt[:, 1], '--', color='grey')
 
 
-                    ## SCRAP:
-    # def kld_tree(self, vertex_tuple=None, depth=3):
-    #     if vertex_tuple is None:
-    #         vertex_tuple = (self.get_current_state(),)
-    #     elif len(vertex_tuple) >= depth+1:
-    #         return {vertex_tuple: self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, vertex_tuple)}
-    #
-    #     k_tree = {}
-    #     c_state = vertex_tuple[-1]
-    #
-    #     for v_id in self.motion_model.G.V[c_state].neighbours:
-    #         if v_id is not c_state:
-    #             k_tree.update(self.kld_tree(vertex_tuple+v_id, depth))
-    #
-    #     return k_tree
