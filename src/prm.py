@@ -59,6 +59,12 @@ class Graph(object):
     def get_edge_weight(self, u_id, v_id):
         return self.V[u_id].neighbours[v_id]
 
+    def get_all_locations(self):
+        loc = np.zeros((self.get_number_vertices(), len(self.get_vertex(self.V.keys()[0]).location)), dtype='float')
+        for i, v in enumerate(self.V):
+            loc[i] = self.get_vertex(v).location
+        return loc
+
     def acyclic_paths_to_depth(self, vertex_tuple, depth=3):
         assert type(vertex_tuple) is tuple, "Input must be a tuple"
 
@@ -261,32 +267,50 @@ class PRM(object):
         print "{0} vertices, {1} edges plotted".format(len(self.G.V), len(Edone))
         return h_vertices, h_lines
 
-    def paths_to_cost(self, vertex_tuple, max_cost, ccost=0.0):
+    def paths_to_cost(self, vertex_tuple, max_cost, min_nodes=0, ccost=0.0):
         assert type(vertex_tuple) is tuple, "Input must be a tuple"
 
         if ccost > max_cost:
             return {}
 
         else:
-            paths = {vertex_tuple:ccost}
+            paths = {}
+            if len(vertex_tuple) >= min_nodes:
+                paths[vertex_tuple] = ccost
             for n in self.G.get_neighbours(vertex_tuple[-1]):
                 if n not in vertex_tuple:
-                    paths.update(self.paths_to_cost(vertex_tuple + (n,), max_cost,
-                                                       ccost+self.distance_matrix[vertex_tuple[-1],n]))
+                    paths.update(self.paths_to_cost(vertex_tuple + (n,), max_cost, min_nodes=min_nodes,
+                                                       ccost=ccost+self.distance_matrix[vertex_tuple[-1], n]))
             return paths
 
-    def pull_path_groups(self, start_vertex, max_cost, n_robots):
+    def pull_path_groups(self, start_vertex, max_cost, n_robots, min_nodes=0):
         if self.distance_matrix is None:
             self.calc_distance_matrix()
-        paths = self.paths_to_cost((start_vertex,), max_cost)
+        paths = self.paths_to_cost((start_vertex,), max_cost, min_nodes)
 
         path_groups = {}
         for path in paths:
             if path[-1] not in path_groups:
                 path_groups[path[-1]] = {path:paths[path]}
             else:
-                path_groups[path[-1]].update({path:paths[path]})
+                # Check if new path is superset or subset of previous path
+                path_to_remove = False
+                path_to_add = path
+                for end_path in path_groups[path[-1]]:
+                    pset = set(path)
+                    if set(end_path).issubset(pset):
+                        path_to_remove = end_path
+                        break
+                    elif pset.issubset(end_path):
+                        path_to_add = False
+                        break
 
+                if path_to_add:
+                    path_groups[path[-1]].update({path_to_add:paths[path_to_add]})
+                if path_to_remove:
+                    del path_groups[path[-1]][path_to_remove]
+
+        # Remove path groups with too few paths for the number of robots
         marked_for_deletion = []
         for end_node in path_groups:
             if len(path_groups[end_node]) < n_robots:
@@ -336,6 +360,7 @@ class GraphVehicle(belief_state.Vehicle):
             inverse_depth=depth)
 
     def kld_tree(self, depth=3):
+        # Deprecated ugly way to calculate KLD over path set because it requires LikelihoodTree
         # This gets all the paths, and each path *includes* the current node as the 0th node in the path
         all_paths = self.motion_model.get_tree_paths(self.get_current_state(), depth)
         end_nodes = {}
@@ -344,7 +369,9 @@ class GraphVehicle(belief_state.Vehicle):
 
         for path in all_paths:
             # kld_path_utility assumes you're working from the current node (not included in path)
-            v_kld = self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, path[1:])
+            # v_kld = self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood, path[1:]) # DEPRECATED BECAUSE TREE IS DUMBFACE
+            v_kld = self.expected_kld(path[1:], 0, self.belief.kld_likelihood, self.get_mc_likelihood)
+
             if path[-1] not in end_nodes or end_nodes[path[-1]] < v_kld:
                 end_nodes[path[-1]] = v_kld
                 self.k_tree[path] = v_kld
@@ -354,12 +381,37 @@ class GraphVehicle(belief_state.Vehicle):
 
         return self.k_tree, best_path, max_util
 
+    def expected_kld(self, obs_locations, depth, kld_function, likelihood_function, pzgc=None):
+        if pzgc is None:
+            pzgc = np.zeros((len(obs_locations), len(self.belief.csamples)), dtype='float')
+
+        if depth >= len(obs_locations):
+            return kld_function(pzgc)
+
+        c_state = obs_locations[depth]
+        E_kld = 0.0
+
+        for cl in likelihood_function(c_state):
+            pzgc[depth] = cl
+            E_kld += self.expected_kld(obs_locations, depth+1, kld_function, likelihood_function, pzgc)
+
+        return E_kld
+
+    def expected_kld_from_paths(self, paths):
+        E_kld = np.zeros(len(paths))
+        for i, path in enumerate(paths):
+            E_kld[i] = self.expected_kld(path, 0, self.belief.kld_likelihood, self.get_mc_likelihood)
+
+        best_path = np.argmax(E_kld)
+
+        return paths[best_path], E_kld[best_path]
+
     def kld_select_obs(self, depth):
 
         paths, best_path, max_util = self.kld_tree(depth=depth)
 
         next_state = best_path[1]
-        self.prune_likelihood_tree(next_state, depth)
+        # self.prune_likelihood_tree(next_state, depth)
         new_path = self.motion_model.get_trajectory(self.get_current_state(), next_state)
         self.full_path = np.append(self.full_path, new_path, axis=0)
 
@@ -415,6 +467,7 @@ class GraphMotion:
     def get_trajectory(self, u_id, v_id):
             #self.G.V[u_id].location + (self.G.V[v_id].location - self.G.V[v_id].location)*self.t
         return np.array([self.get_pose(u_id), self.get_pose(v_id)])
+
 
 class GraphLikelihoodTreeNode(belief_state.LikelihoodTreeNode):
     def add_children(self, inverse_depth):

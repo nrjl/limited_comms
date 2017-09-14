@@ -33,7 +33,7 @@ class BinaryLogisticObs(object):
         axobs.plot(xx, yy)
         axobs.set_ylim(0, 1.0)
         axobs.set_xlim(0, xx[-1][0])
-        axobs.set_ylabel(r'$P(z(r) = T)$')
+        axobs.set_ylabel('$P(z(r) = T)$')
         axobs.set_xlabel('Range, $r$')
 
 

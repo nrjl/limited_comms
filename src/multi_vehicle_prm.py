@@ -5,15 +5,17 @@ import sensor_models
 import belief_state
 import prm
 import random
+import time
 
-plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
+plt.rc('font',**{'family':'serif','sans-serif':['Computer Modern Roman']})
+plt.rc('text', usetex=True)
 randseed = 0
 
 n_obs = 120     # Number of observations for simulation
 n_vehicles = 3  # Number of vehicles
 
 # Truth data
-field_size = (100, 100)
+field_size = (100, 80)
 target_centre = np.array([62.0, 46.0])
 target_radius = 15.0
 
@@ -23,10 +25,17 @@ kld_depth = 2
 sensor = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
 
 # PRM graph
-prm_nodes = 600
+prm_nodes = 500
+ts = time.time()
 roadmap = prm.PRM([[0.0, field_size[0]], [0, field_size[1]]], prm_nodes, type='kPRM*')
 print roadmap
 print roadmap.G
+print "Roadmap construction took {0}s".format(time.time()-ts)
+if roadmap.G.get_number_edges() < 5000:
+    fh, ah = plt.subplots()
+    label_nodes = (prm_nodes <= 100)
+    roadmap.plot_PRM(ah, label_nodes=label_nodes)
+    fh.show()
 
 # Prior sampler
 mcsamples = 1000
@@ -56,7 +65,7 @@ world = belief_state.World(*field_size, target_location=target_centre)
 vehicle_motion = prm.GraphMotion(roadmap.G)
 
 # Start state
-start_state = random.choice(roadmap.G.V.keys())
+start_state = np.random.choice(roadmap.G.V.keys())
 
 # Setup vehicles
 vehicles = [prm.GraphVehicle(world, vehicle_motion, sensor, start_state, unshared=True) for i in range(n_vehicles)]
@@ -71,8 +80,49 @@ def get_all_artists(vv):
         all_artists.extend(v.get_artists())
     return all_artists
 
-def arrange_meeting(prm, start_id, max_cost, n_robots):
-    path_groups = prm.pull_path_groups(start_id, max_cost, n_robots)
+class PathsAndValue(object):
+    def __init__(self, paths, value):
+        self.paths = paths
+        self.value = value
+
+def arrange_meeting(prm, vehicle, start_id, max_cost, n_robots, min_nodes=3):
+    t_start = time.time()
+    path_groups = prm.pull_path_groups(start_id, max_cost, n_robots=n_robots, min_nodes=min_nodes)
+    t_meet = time.time()-t_start
+    total_paths = 0
+    for group in path_groups:
+        total_paths += len(path_groups[group])
+    print "{0} path groups found, {1} total paths in {2}s".format(len(path_groups), total_paths, t_meet)
+
+    t_start = time.time()
+
+    group_val = {}
+    for end_node, path_group in path_groups.iteritems():
+        # For each path group (paths sharing common end) find the best set of n_robots paths and associated E(d_{kl})
+        good_paths = []
+        paths = path_group.keys()
+        path_prefix = tuple()
+        while len(good_paths) < n_robots:
+
+            E_kld = np.zeros(len(paths))
+            for i, path in enumerate(paths):
+                shared_path = path_prefix + tuple([newnode for newnode in path if newnode not in path_prefix])
+                E_kld[i] = vehicle.expected_kld(shared_path, 0, vehicle.belief.kld_likelihood, vehicle.get_mc_likelihood)
+
+            best_path = np.argmax(E_kld)
+            good_paths.append(paths[best_path])
+            path_prefix = path_prefix + tuple([newnode for newnode in path if newnode not in path_prefix])
+            paths.remove(paths[best_path])
+        group_val[end_node] = PathsAndValue(good_paths, E_kld[best_path])
+
+    E_best = None
+    for pval in group_val.itervalues():
+        if pval.value > E_best:
+            E_best = pval
+            best_paths = pval.paths
+
+    print "Best path group found in {0}s, max E_kld = {1}".format(time.time()-t_start, E_best)
+    return best_paths, E_best
 
 def init():
     global curr_dkl, last_share
@@ -95,7 +145,7 @@ def init():
         vehicle.belief.update_pc_map = False
 
         # Build KLD likelihood tree
-        vehicle.build_likelihood_tree(kld_depth)
+        # vehicle.build_likelihood_tree(kld_depth)
 
         # Generate persistent probability map (for plotting)
         vehicle.belief.persistent_centre_probability_map()
@@ -103,7 +153,8 @@ def init():
         vehicle.setup_plot(hv, tree_depth=kld_depth)
         vehicle.update_plot()
 
-    arrange_meeting(roadmap, start_state, max_cost=20.0, n_robots=n_vehicles)
+    best_paths, E_best = arrange_meeting(roadmap, vehicles[0], vehicles[0].get_current_state(), max_cost=15.0, n_robots=n_vehicles, min_nodes=3)
+    print best_paths
 
     return get_all_artists(vehicles)
 
@@ -151,3 +202,55 @@ def animate(i):
 ani = animation.FuncAnimation(h_fig, animate, init_func=init, frames=n_obs, interval=100, blit=True, repeat=False)
 # ani.save('../vid/temp.ogv', writer = 'avconv', fps=3, bitrate=5000, codec='libtheora')
 h_fig.show()
+
+
+
+       #return paths[best_path], E_kld[best_path]
+
+    # For each group, sequentially greedily select the best path until have paths for all robots
+    # # Now, for each group find the best set of observation locations
+    # group_val = {}
+    # for end_node, path_group in path_groups.iteritems():
+    #     # For each path group, sequentially select the best location, then stop when no paths left
+    #     nodes = set()
+    #     for path in path_group.keys():
+    #         nodes = nodes.union(set(path)) # Get unique nodes in the set
+    #
+    #     cpaths = []
+    #     for node in nodes:
+    #         cpaths.append((node,))
+    #
+    #     best_node, best_kld = vehicle.expected_kld_from_paths(cpaths)
+
+
+# def max_E_kld_from_path_group(vehicle, path_group):
+#
+#     # For each path group, sequentially select the best location, then stop when no paths left
+#     nodes = set()
+#     for path in path_groups[end_node].keys():
+#         nodes = nodes.union(set(path))  # Get unique nodes in the set
+#
+#     cpaths = []
+#     for node in nodes:
+#         cpaths.append((node,))
+#
+#     best_node, best_kld = vehicle.expected_kld_from_paths(cpaths)
+#
+#
+# def available_paths(path_group, nodes, n_robots):
+#     # Check if a path group has enough paths to cover the node set
+#     valid_paths = 0
+#     checked_paths = 0
+#
+#     while valid_paths < n_robots and checked_paths < len(path_group):
+#         for path in path_group:
+#             checked_paths += 1
+#             for node in nodes:
+#                 if node in path:
+#                     valid_paths += 1
+#                     break
+#             if valid_paths >= n_robots:
+#                 return True
+#
+#     return False
+

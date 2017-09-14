@@ -146,10 +146,11 @@ class Vehicle(object):
         
     def setup_plot(self, h_ax, tree_depth=None, obs_symbols = ['r^','go'], ms_start=8,ms_target=10,ms_scatter=20,ms_obs=6.5):
         self._plots = True
+        im_extent = [0.0, self.world.get_size()[0], 0.0, self.world.get_size()[1]]
         h_ax.clear()
         self.h_ax = h_ax
         self.h_artists = {}
-        self.h_artists['pc'] = self.h_ax.imshow(np.zeros(self.world.get_size()), origin='lower',vmin=0,animated=True)
+        self.h_artists['pc'] = self.h_ax.imshow(np.zeros(self.world.get_size()), extent=im_extent, origin='lower',vmin=0,animated=True)
         self.h_artists['cpos'], = self.h_ax.plot([],[],'o',color='gold',fillstyle='full',ms=ms_start,mew=0)
         target_pos = self.world.get_target_location()
         self.h_artists['target'], = self.h_ax.plot(target_pos[0], target_pos[1],'wx',mew=2,ms=ms_target)
@@ -158,8 +159,6 @@ class Vehicle(object):
         self.h_artists['obsF'], = self.h_ax.plot([],[],obs_symbols[0],mew=0.5,mec='w',ms=ms_obs)
         self.h_artists['obsT'], = self.h_ax.plot([],[],obs_symbols[1],mew=0.5,mec='w',ms=ms_obs)
         self.h_artists['path'], = self.h_ax.plot([],[],'w-',lw=2)
-        self.h_ax.set_xlim(-.5, self.world.get_size()[0]-0.5)
-        self.h_ax.set_ylim(-.5, self.world.get_size()[1]-0.5)
         if tree_depth is not None:
             self.h_artists['tree'] = self.setup_tree_plot(tree_depth, ms_scatter)
         else:
@@ -167,8 +166,10 @@ class Vehicle(object):
             
         if self.unshared:
             self.h_artists['shared_obsF'], = self.h_ax.plot([],[],'^',color='darksalmon',mec='w',mew=0,ms=ms_obs-1.5)
-            self.h_artists['shared_obsT'], = self.h_ax.plot([],[],'o',color='darkseagreen',mec='w',mew=0,ms=ms_obs-1.5)         
-            
+            self.h_artists['shared_obsT'], = self.h_ax.plot([],[],'o',color='darkseagreen',mec='w',mew=0,ms=ms_obs-1.5)
+        self.h_ax.set_xlim(-.5, self.world.get_size()[0] - 0.5)
+        self.h_ax.set_ylim(-.5, self.world.get_size()[1] - 0.5)
+
     def update_plot(self):
         cpos = self.get_current_pose()
         self.h_artists['cpos'].set_data(cpos[0], cpos[1])

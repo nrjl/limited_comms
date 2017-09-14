@@ -19,7 +19,7 @@ target_centre = np.array([62.0,46.0])
 target_radius = 15.0
 
 # KLD tree search depth
-kld_depth = 2
+kld_depth = 3
 
 # Target range for target finder (50% probability mass in 1% of area near true target)
 target_range = np.sqrt((field_size[0]*field_size[1]/100.0)/np.pi)
