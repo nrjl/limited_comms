@@ -1,5 +1,26 @@
 import numpy as np
 
+class BinarySensor(object):
+    def __init__(self, p0):
+        p0 = np.array(p0)
+        self.pzgx = np.array([p0, 1.0-p0])
+        self._n_returns = 2
+        self._n_states = len(p0)
+
+    def get_n_returns(self):
+        return self._n_returns
+
+    def get_n_states(self):
+        return self._n_states
+
+    def likelihood(self, x, z):
+        return self.pzgx[z][x]
+
+    def generate_observations(self, n_obs, x_true):
+        p_z = self.likelihood(x_true, 0)
+        obs = np.random.uniform(n_obs) > p_z
+        return obs
+
 class BinaryLogisticObs(object):
     def __init__(self, r=30.0, true_pos=0.95, true_neg=0.9, decay_rate=0.25):
         self.r = r
@@ -12,11 +33,12 @@ class BinaryLogisticObs(object):
         return self._n_returns
 
     def likelihood(self, x, z, c):
-        if z == True:
-            return self.true_pos - (self.true_pos + self.true_neg - 1.0) / (
+        p_true = self.true_pos - (self.true_pos + self.true_neg - 1.0) / (
                 1 + np.exp(-self.decay_rate * (np.linalg.norm(x[0:len(c)] - c) - self.r)))
+        if z:
+            return p_true
         else:
-            return 1.0 - self.likelihood(x, True, c)
+            return 1.0 - p_true
 
     def generate_observations(self, x, c):
         # Generate observations at an array of locations
@@ -45,11 +67,11 @@ class DiscreteStep(BinaryLogisticObs):
         self._n_returns = 2
 
     def likelihood(self, x, z, c):
-        if z == True:
-            return self.true_pos - (self.true_pos + self.true_neg - 1.0) * (np.linalg.norm(x[0:len(c)] - c) > self.r)
+        p_true = self.true_pos - (self.true_pos + self.true_neg - 1.0) * (np.linalg.norm(x[0:len(c)] - c) > self.r)
+        if z:
+            return p_true
         else:
-            return 1.0 - self.likelihood(x, True, c)
-
+            return 1.0 - p_true
 
 
 # # Discrete function (step)

@@ -41,7 +41,7 @@ class Vehicle(object):
     # This class defines an exploring vehicle that makes observations and maintains a belief over a target location by
     # selecting actions that maximise the KLD over the target belief
 
-    def __init__(self, world, motion_model, sensor_model, start_state=0, unshared=False, *args, **kwargs):
+    def __init__(self, world, motion_model, sensor_model, start_state=0, unshared=False, vehicle_color='gold', *args, **kwargs):
         self.world = world
         self.motion_model = motion_model
         self.sensor = sensor_model
@@ -50,6 +50,7 @@ class Vehicle(object):
         self.full_path = np.array([self.get_current_pose()])
         self.set_motion_model(motion_model)
         self.unshared = unshared
+        self.vehicle_color = vehicle_color
         if not unshared:
             self.belief = Belief(self.world, self.sensor)
         else:
@@ -151,7 +152,7 @@ class Vehicle(object):
         self.h_ax = h_ax
         self.h_artists = {}
         self.h_artists['pc'] = self.h_ax.imshow(np.zeros(self.world.get_size()), extent=im_extent, origin='lower',vmin=0,animated=True)
-        self.h_artists['cpos'], = self.h_ax.plot([],[],'o',color='gold',fillstyle='full',ms=ms_start,mew=0)
+        self.h_artists['cpos'], = self.h_ax.plot([],[],'o',color=self.vehicle_color,fillstyle='full',ms=ms_start,mew=0)
         target_pos = self.world.get_target_location()
         self.h_artists['target'], = self.h_ax.plot(target_pos[0], target_pos[1],'wx',mew=2,ms=ms_target)
         start_pose = self.get_pose(self.get_start_state())
@@ -285,6 +286,7 @@ class Belief(object):
         # and calculates the evidence likelihood for each of them
         self.csamples = xs
         self.pIgc = np.array([self.p_I_given_c(xc) for xc in xs])
+        self.mc_prior = np.ones(len(xs)) * 1.0 / len(xs)
             
     def uniform_prior_sampler(self, n=1, set_samples=False):
         xs = np.random.uniform(high=self.nx, size=(n, 1))
@@ -301,8 +303,11 @@ class Belief(object):
             for xc in xs:
                 mc_accumulator += self.p_I_given_c(c=xc)
             return mc_accumulator/xs.shape[0]
-        return self.pIgc.mean()
-    
+        return (self.pIgc * self.mc_prior).sum()
+
+    def mc_pcgI(self):
+        return self.pIgc*self.mc_prior / self.pI
+
     def p_I_given_c(self,c,obs=None):
         p_evidence = 1.0
         if obs is None:
@@ -428,6 +433,7 @@ class BeliefUnshared(Belief):
     def reset_unshared(self):
         self.unshared_pIgc = np.ones(self.pIgc.shape)
         self.unshared_pIgc_map = np.ones((self.nx,self.ny))
+        self.old_pcgI = self.mc_pcgI()
         
     def assign_prior_sample_set(self, xs):
         # This takes a set of samples drawn from the prior over centre p(c)

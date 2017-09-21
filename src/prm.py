@@ -3,6 +3,7 @@ from scipy.special import gamma
 from scipy.spatial.distance import pdist, squareform
 import collections
 import matplotlib.cm as cm
+import matplotlib.collections as mc
 import belief_state
 
 class Edge(object):
@@ -252,20 +253,24 @@ class PRM(object):
             dw = 1.0
 
         Edone = set()
-        h_lines = []
+
+        lines = []
+        colours = []
 
         for e_id, w in self.G.E.items():
             if e_id not in Edone and (e_id[1], e_id[0]) not in Edone:
                 ec = (w-w_min)/dw
-                x0, y0 = self.G.get_vertex(e_id[0]).location
-                x1, y1 = self.G.get_vertex(e_id[1]).location
-                h_lines.extend(axh.plot([x0, x1], [y0, y1], color=cmap(ec)))
+                p0 = self.G.get_vertex(e_id[0]).location
+                p1 = self.G.get_vertex(e_id[1]).location
+                lines.append([p0,p1])
+                colours.append(cmap(ec))
                 Edone.add(e_id)
-
+        e_lines = mc.LineCollection(lines, colors=colours)
+        axh.add_collection(e_lines)
         axh.set_xlim(self.limits[0])
         axh.set_ylim(self.limits[1])
         print "{0} vertices, {1} edges plotted".format(len(self.G.V), len(Edone))
-        return h_vertices, h_lines
+        return h_vertices, e_lines
 
     def paths_to_cost(self, vertex_tuple, max_cost, min_nodes=0, ccost=0.0):
         assert type(vertex_tuple) is tuple, "Input must be a tuple"
@@ -294,21 +299,22 @@ class PRM(object):
                 path_groups[path[-1]] = {path:paths[path]}
             else:
                 # Check if new path is superset or subset of previous path
-                path_to_remove = False
+                paths_to_remove = []
                 path_to_add = path
-                for end_path in path_groups[path[-1]]:
-                    pset = set(path)
-                    if set(end_path).issubset(pset):
-                        path_to_remove = end_path
-                        break
-                    elif pset.issubset(end_path):
+                pset = set(path[1:-1])
+
+                for end_path in path_groups[path[-1]]:      #
+                    if pset.issuperset(end_path[1:-1]):
+                        paths_to_remove.append(end_path)
+                    elif pset.issubset(end_path[1:-1]):
                         path_to_add = False
                         break
 
                 if path_to_add:
                     path_groups[path[-1]].update({path_to_add:paths[path_to_add]})
-                if path_to_remove:
-                    del path_groups[path[-1]][path_to_remove]
+                if paths_to_remove:
+                    for pr in paths_to_remove:
+                        del path_groups[path[-1]][pr]
 
         # Remove path groups with too few paths for the number of robots
         marked_for_deletion = []
@@ -383,7 +389,7 @@ class GraphVehicle(belief_state.Vehicle):
 
     def expected_kld(self, obs_locations, depth, kld_function, likelihood_function, pzgc=None):
         if pzgc is None:
-            pzgc = np.zeros((len(obs_locations), len(self.belief.csamples)), dtype='float')
+            pzgc = np.ones((1, len(self.belief.csamples)), dtype='float')
 
         if depth >= len(obs_locations):
             return kld_function(pzgc)
@@ -392,8 +398,8 @@ class GraphVehicle(belief_state.Vehicle):
         E_kld = 0.0
 
         for cl in likelihood_function(c_state):
-            pzgc[depth] = cl
-            E_kld += self.expected_kld(obs_locations, depth+1, kld_function, likelihood_function, pzgc)
+            # pzgc[depth] = cl
+            E_kld += self.expected_kld(obs_locations, depth+1, kld_function, likelihood_function, pzgc*cl)
 
         return E_kld
 
@@ -437,6 +443,31 @@ class GraphVehicle(belief_state.Vehicle):
 
         except (KeyError, AttributeError):
             pass
+
+    def set_path(self, path):
+        self.path_index = 1 # Note that we do this because the first vertex is the current vertex
+        self.meeting_path = path
+
+    def run_path(self):
+        if not self.path_finished():
+
+            # Check if we should start a new path on our own
+            next_state = self.meeting_path[self.path_index]
+            new_path = self.motion_model.get_trajectory(self.get_current_state(), next_state)
+            self.full_path = np.append(self.full_path, new_path, axis=0)
+
+            self.set_current_state(next_state)
+
+            cobs = self.generate_observations([self.get_current_pose()])
+            self.add_observations(cobs)
+            self.path_index += 1
+        else:
+            next_state = self.get_current_state()
+
+        return next_state
+
+    def path_finished(self):
+        return self.path_index >= len(self.meeting_path)
 
 
 class GraphMotion:
