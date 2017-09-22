@@ -13,12 +13,13 @@ class BinarySensor(object):
     def get_n_states(self):
         return self._n_states
 
-    def likelihood(self, x, z):
-        return self.pzgx[z][x]
+    def likelihood(self, x_obs, z, x_true):
+        # The observation is independent of the observation state
+        return self.pzgx[z][x_true]
 
-    def generate_observations(self, n_obs, x_true):
-        p_z = self.likelihood(x_true, 0)
-        obs = np.random.uniform(n_obs) > p_z
+    def generate_observations(self, x_obs, x_true):
+        p_z = self.likelihood(0, x_true)
+        obs = np.random.uniform(len(x_obs)) > p_z
         return obs
 
 class BinaryLogisticObs(object):
@@ -32,26 +33,26 @@ class BinaryLogisticObs(object):
     def get_n_returns(self):
         return self._n_returns
 
-    def likelihood(self, x, z, c):
+    def likelihood(self, x_obs, z, x_true):
         p_true = self.true_pos - (self.true_pos + self.true_neg - 1.0) / (
-                1 + np.exp(-self.decay_rate * (np.linalg.norm(x[0:len(c)] - c) - self.r)))
+                1 + np.exp(-self.decay_rate * (np.linalg.norm(x_obs[0:len(x_true)] - x_true) - self.r)))
         if z:
             return p_true
         else:
             return 1.0 - p_true
 
-    def generate_observations(self, x, c):
+    def generate_observations(self, x_obs, x_true):
         # Generate observations at an array of locations
         obs=[]
-        for xx in x:
-            p_z = np.array([self.likelihood(xx, z, c) for z in range(self.get_n_returns())])
+        for x in x_obs:
+            p_z = np.array([self.likelihood(x, z, x_true) for z in range(self.get_n_returns())])
             zz = np.sum(np.random.uniform() > p_z.cumsum())
-            obs.append((xx,zz))
+            obs.append((x,zz))
         return obs
 
     def plot(self, axobs, n_range=3.0, nx=101):
         xx = np.atleast_2d(np.linspace(0, n_range*self.r, nx)).T
-        yy = [self.likelihood(x, True, c=np.array([0.0])) for x in xx]
+        yy = [self.likelihood(x, True, x_true=np.array([0.0])) for x in xx]
         axobs.plot(xx, yy)
         axobs.set_ylim(0, 1.0)
         axobs.set_xlim(0, xx[-1][0])

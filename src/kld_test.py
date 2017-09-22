@@ -3,8 +3,10 @@ import time
 from sensor_models import  BinarySensor
 import itertools
 
+
 def kld(P, Q):
     return (P * np.log(P / Q)).sum()
+
 
 class BinaryInferrer(object):
 
@@ -12,9 +14,8 @@ class BinaryInferrer(object):
         self.sensor = sensor
         self.states = np.arange(self.sensor.get_n_states())
         if prior is None:
-            self.prior = np.ones(self.sensor.get_n_states())*1.0/self.sensor.get_n_states()
-        else:
-            self.prior = prior
+            prior = np.ones(self.sensor.get_n_states())*1.0/self.sensor.get_n_states()
+        self.prior = prior
         self.pX = self.prior.copy()
 
     def add_observation(self, z):
@@ -26,7 +27,7 @@ class BinaryInferrer(object):
         self.pX = pZandX / pZ
 
     def observation_likelihood(self, z):
-        pzgX = self.sensor.likelihood(self.states, z)
+        pzgX = self.sensor.likelihood([], z, self.states)
         pzandX = pzgX * self.pX
         pz = pzandX.sum()
         return pzgX, pzandX, pz
@@ -34,7 +35,7 @@ class BinaryInferrer(object):
     def joint_observation_likelihood(self, Z):
         pZgX = 1.0
         for z in Z:
-            pZgX *= self.sensor.likelihood(self.states, z)
+            pZgX *= self.sensor.likelihood([], z, self.states)
         pZandX = pZgX*self.pX
         pZ = pZandX.sum()
         return pZgX, pZandX, pZ
@@ -46,7 +47,7 @@ class BinaryInferrer(object):
 
         E_d = 0.0
         for z in range(self.sensor.get_n_returns()):
-            n_pJgX = pJgX*self.sensor.likelihood(self.states, z)
+            n_pJgX = pJgX*self.sensor.likelihood([], z, self.states)
             E_d += self.E_Dkl(depth, current_depth+1, n_pJgX)
         return E_d
 
@@ -85,9 +86,9 @@ print "Iterator - E[D_kl] = {0}, t = {1}s".format(E_d2, t_total2)
 # n_iter = 10000
 # t_start = time.time()
 # for i in range(n_iter):
-#     pJgX = test_sensor.likelihood(bb.states, obs_list[1])
+#     pJgX = test_sensor.likelihood(obs_list[1], bb.states)
 #     for obs in obs_list[2:]:
-#         pJgX *= test_sensor.likelihood(bb.states, obs)
+#         pJgX *= test_sensor.likelihood(obs, bb.states)
 #     pIJandX = (pJgX*bb1.pIandX)
 #     pIJ = pIJandX.sum()
 #     D3 = 1.0/pIJ*( pIJandX*(np.log(pJgX) + np.log(bb1.pI/pIJ))).sum() # 1.0/pIJandX.sum()*( pIJandX*np.log(pJgX*bb1.pI/pIJ)).sum() #
@@ -96,9 +97,9 @@ print "Iterator - E[D_kl] = {0}, t = {1}s".format(E_d2, t_total2)
 #
 # t_start = time.time()
 # for i in range(n_iter):
-#     pJgX = test_sensor.likelihood(bb.states, obs_list[1])
+#     pJgX = test_sensor.likelihood(obs_list[1], bb.states)
 #     for obs in obs_list[2:]:
-#         pJgX *= test_sensor.likelihood(bb.states, obs)
+#         pJgX *= test_sensor.likelihood(obs, bb.states)
 #     pIJandX = (pJgX * bb1.pX)
 #     D4 = kld(pIJandX / pIJandX.sum(), bb1.pX)
 # ttime = time.time()-t_start

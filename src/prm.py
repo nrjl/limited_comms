@@ -345,7 +345,7 @@ class GraphVehicle(belief_state.Vehicle):
         for vtx in self.motion_model.get_graph().get_vertices():
             p_z_given_x = np.ones((ns, len(self.belief.csamples)), dtype='float')
             for z in range(ns-1):
-                p_z_given_x[z] = [self.sensor.likelihood(vtx.get_location(), z, c=xc) for xc in self.belief.csamples]
+                p_z_given_x[z] = [self.sensor.likelihood(vtx.get_location(), z, x_true=xc) for xc in self.belief.csamples]
                 p_z_given_x[ns-1] -= p_z_given_x[z]     # Last row is 1.0-sum(p(z|x) forall z != ns
             self.mc_likelihood[vtx.get_id()] = p_z_given_x
 
@@ -444,9 +444,10 @@ class GraphVehicle(belief_state.Vehicle):
         except (KeyError, AttributeError):
             pass
 
-    def set_path(self, path):
+    def set_path(self, path, E_best):
         self.path_index = 1 # Note that we do this because the first vertex is the current vertex
         self.meeting_path = path
+        self.E_best = E_best
 
     def run_path(self):
         if not self.path_finished():
@@ -496,7 +497,7 @@ class GraphMotion:
         return self.G.acyclic_paths_to_goal((start_id,), goal_id, max_cost = cost)
 
     def get_trajectory(self, u_id, v_id):
-            #self.G.V[u_id].location + (self.G.V[v_id].location - self.G.V[v_id].location)*self.t
+        # self.G.V[u_id].location + (self.G.V[v_id].location - self.G.V[v_id].location)*self.t
         return np.array([self.get_pose(u_id), self.get_pose(v_id)])
 
 

@@ -22,16 +22,16 @@ field_size = (100, 100)
 target_centre = np.array([20.0, 20.0])
 target_radius = 15.0
 
-kld_depth = 2
-max_path_cost = 30.0
+kld_depth = 10
+max_path_cost = 25.0
 
 # Observation model
 sensor = sensor_models.BinaryLogisticObs(r=target_radius, true_pos=0.9, true_neg=0.9, decay_rate=0.35)
 
 # PRM graph
-prm_nodes = 300
+prm_nodes = 400
 ts = time.time()
-roadmap = prm.PRM([[0.0, field_size[0]], [0, field_size[1]]], prm_nodes, type='kPRM*')
+roadmap = prm.PRM([[0.0, field_size[0]], [0, field_size[1]]], prm_nodes, type='kPRM', k=4)
 print roadmap
 print roadmap.G
 print "Roadmap construction took {0}s".format(time.time()-ts)
@@ -148,7 +148,7 @@ def arrange_meeting(prm, vehicle, start_id, max_cost, n_robots, min_nodes=3):
                 break
 
             for i, path in enumerate(paths):
-                t_start = time.time()
+                t_paths = time.time()
                 new_nodes = tuple([newnode for newnode in path[1:-1] if newnode not in path_prefix])
                 if len(new_nodes) == 0 or set(new_nodes).issubset(best_path):
                     E_kld = best_E_kld
@@ -158,7 +158,7 @@ def arrange_meeting(prm, vehicle, start_id, max_cost, n_robots, min_nodes=3):
                 if E_kld > best_E_kld:
                     best_E_kld = E_kld
                     best_path = path
-                # print "New nodes {N}, t={t:0.3f}s, E_kld={E:0.4f}".format(N=new_nodes, t=time.time()-t_start, E=E_kld)
+                # print "New nodes {N}, t={t:0.3f}s, E_kld={E:0.4f}".format(N=new_nodes, t=time.time()-t_paths, E=E_kld)
 
             good_paths.append(best_path)
             path_prefix = path_prefix + tuple([newnode for newnode in best_path[1:-1] if newnode not in path_prefix])
@@ -168,8 +168,8 @@ def arrange_meeting(prm, vehicle, start_id, max_cost, n_robots, min_nodes=3):
 
         group_val[end_node] = PathsAndValue(good_paths, best_E_kld)
         print "End node {n} ({i}/{j}), E_kld={E}, solved in {t:0.2f}s".format(n=end_node, E = best_E_kld,
-                                                                                       t=time.time() - t_group,
-                                                                                       i=i_groups, j=len(path_groups))
+                                                                              t=time.time() - t_group,
+                                                                              i=i_groups, j=len(path_groups))
 
     E_best = None
     for pval in group_val.itervalues():
@@ -219,7 +219,7 @@ def init():
     vehicles[0].h_ax.add_collection(p_lines)
 
     for i, vehicle in enumerate(vehicles):
-        vehicle.set_path(best_paths[i])
+        vehicle.set_path(best_paths[i], E_best)
 
     all_artists = get_all_artists(vehicles)
     all_artists.append(p_lines)
@@ -285,7 +285,7 @@ def animate(i):
 
 
 ani = animation.FuncAnimation(h_fig, animate, init_func=init, frames=n_obs, interval=100, blit=True, repeat=False)
-ani.save('../vid/temp.ogv', writer = 'avconv', fps=3, bitrate=5000, codec='libtheora')
+# ani.save('../vid/temp.ogv', writer = 'avconv', fps=3, bitrate=5000, codec='libtheora')
 h_fig.show()
 
 

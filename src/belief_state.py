@@ -262,8 +262,9 @@ class Belief(object):
         # Update p(I|c) for the c samples with new observations
         for ii, xc in enumerate(self.csamples):
             self.pIgc[ii] *= self.p_I_given_c(c=xc,obs=obs)
-            self.pI = self.mc_p_I()
-                
+        self.pI = self.mc_p_I()
+        self.mc_pc = self.mc_pcgI()     # Update centre probabilities (stupid because pIgc gets too small eventually)
+
         if self.update_pc_map:
         # Update p(I|c) for the pc map samples
             for ii,xx in enumerate(self.x):
@@ -313,7 +314,7 @@ class Belief(object):
         if obs is None:
             obs=self.observations
         for xx,zz in obs:
-            p_evidence *= self.sensor.likelihood(xx,zz,c=c)
+            p_evidence *= self.sensor.likelihood(xx,zz,x_true=c)
         return p_evidence
     
     def p_c_given_I(self,c,pc=None,pI=None):
@@ -373,7 +374,7 @@ class Belief(object):
         d_kl = 1/p_all*np.mean(p_all_samples*np.log(p_new_obs_c*pI/p_all))
         return d_kl
 
-    def kld_likelihood(self,pzgc=None,X=[],Z=[]):
+    def kld_likelihood_old(self,pzgc=None,X=[],Z=[]):
         if pzgc is None:
             pzgc = np.array([self.pzgc_samples(x,z) for x,z in zip(X,Z)])
         p_new_obs_c = np.product(pzgc, axis=0)  # Probability of the set of observations given c
@@ -382,7 +383,11 @@ class Belief(object):
         pI = self.pI    # self.mc_p_I()
         d_kl = 1/pI*np.mean(p_all_samples*np.log(p_new_obs_c*pI/p_all))
         return d_kl
-        
+
+    def kld_likelihood(self, pJgX):
+        pJandX = pJgX * self.mc_pc
+        return (pJandX * (np.log(pJgX) - np.log(pJandX.sum()))).sum()
+
     def pZ(self, pzgc):
         p_new_obs_c = np.product(pzgc, axis=0)
         p_all_samples = p_new_obs_c*self.pIgc
@@ -464,7 +469,8 @@ class BeliefUnshared(Belief):
                         self.unshared_pIgc_map[ii,jj] *= cpIgc
         else:
             self.pIgc_map *= up_pIgc_map
-                    
+        self.mc_pc = self.mc_pcgI()
+
     def reset_observations(self):
         self.observations = []
         if hasattr(self, 'pIgc'):
