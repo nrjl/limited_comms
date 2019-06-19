@@ -19,7 +19,7 @@ n_vehicles = 3  # Number of vehicles
 
 # Truth data
 field_size = (100, 100)
-target_centre = np.array([20.0, 20.0])
+target_centre = np.array([40.0, 50.0])
 target_radius = 15.0
 
 kld_depth = 10

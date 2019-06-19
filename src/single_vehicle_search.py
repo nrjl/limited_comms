@@ -11,7 +11,7 @@ plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
 randseed = 1
 
 # Number of observations for simulation
-n_obs = 20
+n_obs = 100
 
 # Truth data
 field_size = (100,100)

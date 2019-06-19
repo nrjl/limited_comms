@@ -403,6 +403,11 @@ class GraphVehicle(belief_state.Vehicle):
 
         return E_kld
 
+    def mc_rollout(self, remaining_budget, likelihood_function, pzgc=None):
+        # Do we rollout with random observations too?
+        if pzgc is None:
+            pzgc = np.ones((1, len(self.belief.csamples)), dtype='float')
+
     def expected_kld_from_paths(self, paths):
         E_kld = np.zeros(len(paths))
         for i, path in enumerate(paths):
@@ -450,7 +455,15 @@ class GraphVehicle(belief_state.Vehicle):
         self.E_best = E_best
 
     def run_path(self):
-        if not self.path_finished():
+
+        # if self.path_index >= 0:
+
+        if belief_state.kullback_leibler_divergence(self.belief.mc_pc, self.belief.shared_pc) > self.E_best:
+            print "Vehicle is leaving shared path"
+            self.path_index = -1
+
+
+        elif not self.path_finished():
 
             # Check if we should start a new path on our own
             next_state = self.meeting_path[self.path_index]

@@ -193,5 +193,5 @@ class ConstantRelativeRiskAversion(EconomicUtility):
         return 'CRRA'
 
 
-class LotteryResult(object):
-    def __init__(self):
+# class LotteryResult(object):
+#     def __init__(self):

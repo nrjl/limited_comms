@@ -3,6 +3,11 @@ import numpy as np
 import copy
 import itertools
 
+
+def kullback_leibler_divergence(P, Q):
+    return (P * np.log(P / Q)).sum()
+
+
 class World(object):
     # Basic World class that defines a 2D rectangular world with a target in it
     def __init__(self, width, height, target_location=None):
@@ -17,7 +22,8 @@ class World(object):
         
     def get_size(self):
         return self.width, self.height
-        
+
+
 class TargetFinder(object):
     # This is used to determine the probability mass in range of the target
     def __init__(self, target_loc, belief_state, tdist=1.0):
@@ -118,7 +124,7 @@ class Vehicle(object):
         end_kld = []
         for path in itertools.product(range(n_yaws),repeat=depth):
             # For each path, use the likelihood tree to evaluate the utility of that path
-            end_kld.append(self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood,path))
+            end_kld.append(self.likelihood_tree.kld_path_utility(self.belief.kld_likelihood_old,path))
         #end_states = self.motion_model.get_leaf_states(self.get_current_state(),depth)
         #end_kld = np.reshape(end_kld,n_yaws*np.ones(depth,dtype='int'))
         return end_kld
@@ -288,6 +294,7 @@ class Belief(object):
         self.csamples = xs
         self.pIgc = np.array([self.p_I_given_c(xc) for xc in xs])
         self.mc_prior = np.ones(len(xs)) * 1.0 / len(xs)
+        self.mc_pc = self.mc_prior.copy()
             
     def uniform_prior_sampler(self, n=1, set_samples=False):
         xs = np.random.uniform(high=self.nx, size=(n, 1))
@@ -326,7 +333,7 @@ class Belief(object):
         return pIgc*pc/pI
     
     def pzgc_samples(self,x,z):
-        return np.array([self.sensor.likelihood(x, z, c=xc) for xc in self.csamples])
+        return np.array([self.sensor.likelihood(x, z, x_true=xc) for xc in self.csamples])
 
     def pzgc_full(self, x):
         ns = self.sensor.get_n_returns()
@@ -438,7 +445,7 @@ class BeliefUnshared(Belief):
     def reset_unshared(self):
         self.unshared_pIgc = np.ones(self.pIgc.shape)
         self.unshared_pIgc_map = np.ones((self.nx,self.ny))
-        self.old_pcgI = self.mc_pcgI()
+        self.shared_pc = self.mc_pc.copy()
         
     def assign_prior_sample_set(self, xs):
         # This takes a set of samples drawn from the prior over centre p(c)
