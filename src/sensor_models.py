@@ -85,12 +85,12 @@ class DiscreteStep(BinaryLogisticObs):
 #
 #
 # # Continuous function (logistic)
-# def logistic_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9, decay_rate=0.25):
-#     # High decay rate is sharp dropoff
-#     if z==True:
-#         return true_pos - (true_pos+true_neg-1.0)/(1+np.exp(-decay_rate*(np.linalg.norm(x[0:len(c)]-c)-r)))
-#     else:
-#         return 1.0-logistic_obs(x,True,c,r, true_pos, true_neg)
+def logistic_obs(x,z,c,r=30.0, true_pos=0.95, true_neg=0.9, decay_rate=0.25):
+    # High decay rate is sharp dropoff
+    if z==True:
+        return true_pos - (true_pos+true_neg-1.0)/(1+np.exp(-decay_rate*(np.linalg.norm(x[0:len(c)]-c)-r)))
+    else:
+        return 1.0-logistic_obs(x,True,c,r, true_pos, true_neg)
         
 def arc_samples(c, r, t1, t2, n=6):
     ang = np.linspace(t1*np.pi/180, t2*np.pi/180,n)

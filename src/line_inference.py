@@ -53,6 +53,6 @@ def animate(i, *args, **kwargs):
     return h_cc,
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = 100, interval = 100, blit = True, repeat = False)
-ani.save('line_vid.mp4', writer = 'avconv', fps=10, bitrate=5000)
+# ani.save('line_vid.mp4', writer = 'avconv', fps=10, bitrate=5000)
 
-h_fig.show()
+plt.show()

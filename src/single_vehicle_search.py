@@ -7,6 +7,7 @@ import belief_state
 import copy
 plt.style.use('ggplot')
 # plt.rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
+plt.rc('text', usetex=True)
 plt.rc('text.latex', preamble='\usepackage{amsmath},\usepackage{amssymb}')
 randseed = 1
 
@@ -85,8 +86,9 @@ def animate(i):
     return vehicle.get_artists()
 
 ani = animation.FuncAnimation(h_fig, animate, init_func = init, frames = n_obs, interval = 100, blit = True, repeat = False)
+ani.save('../vid/single_vehicle/%03d.png', writer='imagemagick')
 #ani.save('../vid/temp.ogv', writer = 'avconv', fps=5, codec='libtheora') #extra_args=['-vcodec', 'libx264'])
-h_fig.show()
+plt.show()
 
 #h_mov = []
 #f2,a2 = plt.subplots()
